@@ -1,166 +1,92 @@
-# FLOYD.MD
+# FLOYD v5.0.2 — SOVEREIGN BOOT CONTRACT
 
-**Purpose:** Sovereign governing document for the FLOYD repository. All agents MUST adhere to these directives.
-**Effective:** 2026-01-27 06:11:36 EST
-**Authority:** RepoGod - The Sovereign Architect
+**Version:** 1.7.1
+**Governance:** .supercache/ v1.7.1
 
----
+You are operating under the **v5.0.2 Production Protocol**. This repository is a sovereign workspace. All memory, context, and crystallized patterns are strictly bound to this project.
 
-## PRIME DIRECTIVE: SYSTEM TIME MANDATE
+## 0. PROJECT SOVEREIGNTY (THE PRIME DIRECTIVE)
+- **Local Memory**: You MUST retrieve and store all persistent state in `./.floyd/.supercache` (JSON).
+- **Isolation**: DO NOT swap "memories" with other projects or access global repositories for project-specific tasks.
+- **Boot Protocol**: Read this file (`FLOYD.md`) and the local cache upon every initialization to align your mental state.
 
-### ALL Agents MUST Use System Time
+## I. CORE OPERATIONAL RULES
+1. **Read Before Editing**: Always verify file paths and content with `ls`, `view`, or `grep` before applying changes.
+2. **Deterministic Reasoning**: Use the `<think>` block for all complex architectural planning and silent reasoning.
+3. **Surgical Edits**: Use `edit_range` or `write_file` for precise modifications. Avoid rewriting entire files unless necessary.
+4. **Code Integrity**: All Go code MUST be formatted with `gofumpt`. All code must be production-ready, handling nil/zero/empty inputs and explicit error paths.
+5. **Context Expiry & Self-Cleaning**: Upon formulating a successful commit or completing a major task, explicitly flush intermediate task results, large file buffers, and raw fetch data from your active context window to prevent degradation.
+6. **No Ceremony**: Zero conversational filler. No preambles, postambles, or speculative options. Output results immediately.
 
-Every agent, process, and automated system within the FLOYD repository **MUST** use system time for:
-- Date/timestamps on ALL correspondence
-- Date/timestamps on ALL logging
-- Date/timestamps on ALL file creation/modification records
-- Date/timestamps on ALL agent handoffs
-- Date/timestamps on ALL status reports
+## II. VISUAL & DOCUMENTATION STANDARDS
+- **Diagrams**: Use **Mermaid** syntax for all workflows, state machines, and architectural maps.
+- **References**: Always use the `file_path:line_number` format when citing code.
+- **Tables**: All tables MUST be rendered in code blocks using the exact Python box/unicode generation script standardized below.
 
-### Required Format
-
-All timestamps MUST include:
-1. **Full ISO 8601 date**: `YYYY-MM-DD`
-2. **Time with seconds**: `HH:MM:SS`
-3. **Timezone indicator**: `TZ` (e.g., `EST`, `UTC`, `PST`)
-
-**Format:** `YYYY-MM-DD HH:MM:SS TZ`
-
-**Examples:**
-- `2026-01-27 06:11:36 EST` (correct)
-- `2026-01-27 06:11:36 -0500` (acceptable)
-- `2026-01-27` (incomplete - forbidden)
-- `Jan 27, 2026` (non-standard - forbidden)
-
-### System Time Acquisition
-
-**Bash:**
-```bash
-date +"%Y-%m-%d %H:%M:%S %Z"
-```
-
-**Node.js:**
-```javascript
-new Date().toLocaleString('en-US', {
-  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hour12: false
-}).replace(/\//g, '-')
-```
-
-**Python:**
 ```python
-from datetime import datetime
-now = datetime.now()
-print(now.strftime("%Y-%m-%d %H:%M:%S %Z"))
+def generate_box_table(headers, rows):
+    # Calculate the max width for each column based on content
+    col_widths = []
+    for i in range(len(headers)):
+        max_w = len(headers[i])
+        for row in rows:
+            max_w = max(max_w, len(str(row[i])))
+        col_widths.append(max_w)
+
+    # Helper to build separator lines
+    def get_sep(left, mid, right, line_char='─'):
+        return left + mid.join([line_char * w for w in col_widths]) + right
+
+    # Construct the table components
+    top = get_sep('┌', '┬', '┐')
+    mid = get_sep('├', '┼', '┤')
+    bot = get_sep('└', '┴', '┘')
+
+    # Construct rows with exact padding
+    def format_row(data):
+        formatted = []
+        for i, item in enumerate(data):
+            # Left align text, Right align numbers
+            val = str(item)
+            if val.isdigit():
+                formatted.append(val.rjust(col_widths[i]))
+            else:
+                formatted.append(val.ljust(col_widths[i]))
+        return '│' + '│'.join(formatted) + '│'
+
+    # Print the result
+    print(top)
+    print(format_row(headers))
+    print(mid)
+    for row in rows:
+        print(format_row(row))
+    print(bot)
+
+# Example usage
+# headers = ["Wave", "Repos", "Status", "Timestamp (UTC)"]
+# data = [
+#     ["Wave 3: TUI and Cartographer", "5/5", "DONE", "2026-02-09 11:01"],
+#     ["Wave 9: Legacy and misc", "19/19", "DONE", "2026-02-09 16:42"],
+# ]
+# generate_box_table(headers, data)
 ```
 
----
+## III. TOOL PROTOCOL (SANDBOXED EXECUTION)
+- **Dynamic Capabilities**: Do not assume local host execution. Host environments (like macOS) restrict binaries like `curl` and `bash`. All side-effect heavy operations (fetching, compiling, scripting) MUST be routed through the Model Context Protocol (MCP) servers operating in ephemeral MicroVM sandboxes.
+- **Read-Only Tools**: (`ls`, `glob`, `view`, `grep`) Execute immediately without preamble.
+- **State-Changing & Async Tools**: (MCP-Task, `edit`, `write`) Provide a single-sentence reasoning block before execution. Dispatch long-running or blocking I/O jobs via MCP Tasks to avoid concurrency deadlocks.
+- **Git**: Use semantic commits (`feat:`, `fix:`, `chore:`). NEVER force push or update git config unless explicitly instructed.
 
-## ROOT DIRECTORY SANITITY
-
-### Permitted Root-Level Files
-
-**ONLY** the following files are permitted in the repository root (`/Volumes/Storage/FLOYD_CLI/`):
-
-| File | Purpose | Required |
-|------|---------|----------|
-| `FLOYD.MD` | This governing document | YES |
-| `README.md` | Project overview for visitors | YES |
-| `LICENSE` | Legal licensing information | YES |
-| `Claude.md` | Agent operating instructions | YES |
-| `.gitignore` | Git exclusion rules | YES |
-| `package.json` | Root package manifest | YES |
-| `package-lock.json` | Root lockfile | YES |
-
-### Forbidden Root-Level Content
-
-**FORBIDDEN** - The following MUST NOT exist in the repository root:
-
-- Documentation files (move to `docs/`)
-- Test files (move to appropriate `tests/` or `test/` directories)
-- Temporary analysis files (move to `docs/analysis/` or delete)
-- Agent work products (move to appropriate project directories)
-- Personal notes (move to `docs/notes/` or delete)
-
-**Violators will be moved without warning.**
+## IV. INITIALIZATION (THE "WAKE UP" ROUTINE)
+Upon arrival, you must:
+1. **Detect/Provision**: Ensure `./.floyd/` and `./.floyd/.supercache` exist.
+2. **Tool Discovery**: Query the local MCP registry (via `agent/tools/mcp/tools.go` integration) to map your available sandboxed capabilities for the current session.
+3. **Load State**: Retrieve the last known intent and crystallized patterns from the local cache.
+4. **Boot Summary**: Output exactly 3 lines:
+   - **Active Project**: [Name]
+   - **Last Known Status**: [Status]
+   - **Current Intent**: [Intent]
 
 ---
-
-## DOCUMENTATION ORGANIZATION
-
-### Required Structure
-
-```
-/Volumes/Storage/FLOYD_CLI/
-├── FLOYD.MD                    # This file (root governing document)
-├── README.md                   # Project overview
-├── LICENSE                     # Legal
-├── Claude.md                   # Agent OS
-├── docs/                       # ALL documentation
-│   ├── specifications/         # Feature specifications
-│   ├── architecture/           # System architecture docs
-│   ├── api/                    # API documentation
-│   ├── guides/                 # User and developer guides
-│   ├── analysis/               # Analysis and reports
-│   └── notes/                  # Reference notes
-├── INK/                        # Floyd CLI project
-├── floyd-wrapper-main/         # Floyd wrapper
-├── FloydDesktopWeb/            # Desktop application
-├── FloydChromeBuild/           # Chrome extension
-├── mobile/                     # Mobile application
-├── packages/                   # Shared packages
-├── RepoGod/                    # RepoGod workspace
-└── .floyd/                     # FLOYD operational directory
-```
-
----
-
-## AGENT COMPLIANCE
-
-### Every Agent MUST:
-
-1. **Before ANY output:** Check system time and apply proper timestamp
-2. **Before ANY file creation:** Verify location compliance
-3. **Before ANY logging:** Apply full timestamp format
-4. **Before handoff:** Include timestamped status summary
-
-### Compliance Checklist
-
-- [ ] All logs have `YYYY-MM-DD HH:MM:SS TZ` timestamps
-- [ ] All correspondence is timestamped
-- [ ] No documentation in root (except permitted files)
-- [ ] All files organized per structure above
-
----
-
-## VIOLATION PROTOCOL
-
-### First Violation
-
-- File moved to correct location
-- Agent warned
-- Incident logged to `.floyd/logs/compliance.log`
-
-### Second Violation
-
-- Agent dismissed
-- Work rolled back
-- New agent spawned with fresh context
-
----
-
-## VERSION HISTORY
-
-| Date | Change | Agent |
-|------|--------|-------|
-| 2026-01-27 06:11:36 EST | Initial creation - System Time Mandate + Root Directory Sanity | RepoGod |
-
----
-
-**End of FLOYD.MD**
+**Solo Developer Multiplier: MAXIMIZED**
+**Context Singularity: ACTIVE**
