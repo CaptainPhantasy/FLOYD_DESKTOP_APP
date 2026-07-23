@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "gates": [
+    {
+      "name": "typecheck-server",
+      "command": [
+        "npx",
+        "tsc",
+        "-p",
+        "tsconfig.server.json",
+        "--noEmit"
+      ],
+      "required": true
+    },
+    {
+      "name": "tests",
+      "command": [
+        "npm",
+        "run",
+        "test:run"
+      ],
+      "required": true
+    }
+  ],
+  "include": [
+    "src/**",
+    "app/**",
+    "lib/**",
+    "cmd/**",
+    "internal/**",
+    "*.go",
+    "*.py",
+    "*.ts",
+    "*.tsx",
+    "*.js",
+    "*.jsx",
+    "*.json",
+    "*.md",
+    "*.css",
+    "*.html",
+    "package.json",
+    "package-lock.json",
+    "go.mod",
+    "go.sum",
+    "pyproject.toml",
+    "Cargo.toml",
+    "Cargo.lock"
+  ],
+  "deny": [
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "node_modules/**",
+    ".git/**",
+    ".harness/**",
+    ".pi/**",
+    ".omp/**",
+    ".supercache/**"
+  ],
+  "baseBranch": "main",
+  "publish": true,
+  "allowLocalRemote": false
+}
