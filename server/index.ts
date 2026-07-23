@@ -20,18 +20,49 @@ import { SkillsManager, Skill } from './skills-manager.js';
 import { ProjectsManager, Project } from './projects-manager.js';
 import { BroworkManager, AgentTask, Provider as BroworkProvider } from './browork-manager.js';
 import { WebSocketMCPServer } from './ws-mcp-server.js';
+import {
+  ChatGPTSubscriptionClient,
+  CHATGPT_MODELS,
+  userMessage as chatgptUserMessage,
+  toolResult as chatgptToolResult,
+  type ResponseInputItem,
+} from './chatgpt-subscription.js';
+import { buildDefaultSystemPrompt } from './prompts/default-system-prompt.js';
 
 // Load .env.local
 config({ path: '.env.local' });
 
+// ---- Admitted-surface identity -------------------------------------------
+// Floyd Core verifies each surface by probing /api/health for an identity
+// block: { surface_id, source_root, source_commit }. The commit is read from
+// this copy's git HEAD once at startup so the surface honestly reports what
+// code it is actually running.
+import { execSync } from 'child_process';
+const SURFACE_IDENTITY = (() => {
+  const surfaceId = process.env.FLOYD_SURFACE_ID || 'desktop';
+  let sourceRoot = process.cwd();
+  let sourceCommit = process.env.FLOYD_SOURCE_COMMIT || '';
+  try {
+    sourceRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim();
+    sourceCommit = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+  } catch {
+    // Non-git deployment: fall back to env/cwd values.
+  }
+  return { surface_id: surfaceId, source_root: sourceRoot, source_commit: sourceCommit };
+})();
+
 // Initialize WebSocket MCP server for Chrome extension
 let wsMcpServer: WebSocketMCPServer | null = null;
 
-// Initialize tool executor
+// Initialize tool executor. Allowed roots cover the app itself, the operator
+// home, temp space, and the FLOYD workstation/runtime volumes. Override or
+// extend with FLOYD_TOOL_PATHS (colon-separated).
 const toolExecutor = new ToolExecutor([
   process.cwd(),
   process.env.HOME || '/',
   '/tmp',
+  '/Volumes/Storage',
+  ...(process.env.FLOYD_TOOL_PATHS ? process.env.FLOYD_TOOL_PATHS.split(':').filter(Boolean) : []),
 ]);
 
 // Initialize managers
@@ -73,7 +104,7 @@ interface Session {
   folder?: string;        // Phase 3, Task 3.2
 }
 
-type Provider = 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
+type Provider = 'chatgpt-subscription' | 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
 
 interface Settings {
   provider: Provider;
@@ -86,6 +117,7 @@ interface Settings {
 
 // Provider configurations
 const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
+  'chatgpt-subscription': CHATGPT_MODELS,
   anthropic: [
     { id: 'claude-sonnet-4-5-20250514', name: 'Claude 4.5 Sonnet (Recommended)' },
     { id: 'claude-opus-4-5-20250514', name: 'Claude 4.5 Opus (Most Capable)' },
@@ -126,14 +158,19 @@ const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
   ],
 };
 
-// Default settings - use GLM API key with Z.ai Anthropic-compatible endpoint
+// Default settings — the operator's ChatGPT monthly subscription (OAuth via
+// ~/.codex/auth.json) is the primary LLM route for the Desktop agent.
+// API-key providers remain available as explicit fallbacks via Settings.
 let settings: Settings = {
-  provider: 'anthropic-compatible',
+  provider: 'chatgpt-subscription',
   apiKey: process.env.GLM_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || '',
-  model: 'glm-4.7',
+  model: 'gpt-5.4',
   maxTokens: 16384,
   baseURL: 'https://api.z.ai/api/anthropic',
 };
+
+// ChatGPT subscription client (single instance; owns token refresh)
+const chatgptClient = new ChatGPTSubscriptionClient();
 
 // Sessions store
 const sessions: Map<string, Session> = new Map();
@@ -188,6 +225,7 @@ async function initDataDir() {
     broworkManager.setBaseURL(settings.baseURL);
     broworkManager.setModel(settings.model);
     broworkManager.setProvider(settings.provider);
+    broworkManager.setChatGPTClient(chatgptClient);
     console.log('[Server] Browork manager initialized');
     
   } catch (error) {
@@ -254,25 +292,32 @@ function getClient(): Anthropic | OpenAI | null {
 // ============ API Routes ============
 
 // Health check
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+  const chatgptConfigured = await chatgptClient.isConfigured();
+  const hasCredentials = settings.provider === 'chatgpt-subscription' ? chatgptConfigured : !!settings.apiKey;
   res.json({ 
     status: 'ok', 
-    hasApiKey: !!settings.apiKey,
+    hasApiKey: hasCredentials,
+    chatgptConfigured,
     provider: settings.provider,
-    model: settings.model 
+    model: settings.model,
+    identity: SURFACE_IDENTITY,
   });
 });
 
 // Get available providers and models
-app.get('/api/providers', (req, res) => {
+app.get('/api/providers', async (req, res) => {
+  const chatgptStatus = await chatgptClient.status();
   res.json({
     providers: [
+      { id: 'chatgpt-subscription', name: 'ChatGPT Subscription (OAuth)', configured: chatgptStatus.configured },
       { id: 'anthropic', name: 'Anthropic' },
       { id: 'anthropic-compatible', name: 'Anthropic-Compatible (Custom Endpoint)' },
       { id: 'openai', name: 'OpenAI' },
       { id: 'glm', name: 'Zai GLM (Zhipu)' },
     ],
     models: PROVIDER_MODELS,
+    chatgpt: chatgptStatus,
   });
 });
 
@@ -284,6 +329,9 @@ app.get('/api/settings', (req, res) => {
     hasApiKey: !!settings.apiKey,
     apiKeyPreview: settings.apiKey ? `${settings.apiKey.slice(0, 10)}...${settings.apiKey.slice(-4)}` : null,
     systemPrompt: settings.systemPrompt,
+    // The prompt actually used when systemPrompt is empty — shown in the UI so
+    // the operator always sees what the agent knows about its capabilities.
+    effectiveSystemPrompt: settings.systemPrompt || buildDefaultSystemPrompt(),
     maxTokens: settings.maxTokens,
     baseURL: settings.baseURL,
   });
@@ -304,9 +352,9 @@ app.post('/api/settings', async (req, res) => {
   if (settings.apiKey) {
     broworkManager.setApiKey(settings.apiKey);
     broworkManager.setBaseURL(settings.baseURL);
-    broworkManager.setModel(settings.model);
-    broworkManager.setProvider(settings.provider);
   }
+  broworkManager.setModel(settings.model);
+  broworkManager.setProvider(settings.provider);
   
   await saveSettings();
   
@@ -538,6 +586,7 @@ app.post('/api/browork/tasks', (req, res) => {
     broworkManager.setApiKey(settings.apiKey);
   }
   broworkManager.setModel(settings.model);
+  broworkManager.setProvider(settings.provider);
   
   const task = broworkManager.createTask(name, description);
   res.json(task);
@@ -778,7 +827,7 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
   let fullResponse = '';
   
   // Build system prompt
-  let systemPrompt = settings.systemPrompt || 'You are Floyd, a helpful AI assistant with access to tools for file system operations and command execution. Use tools when needed to help the user.';
+  let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt();
   
   // Add active skills
   const skillsContext = skillsManager.getSystemPromptAdditions();
@@ -801,7 +850,26 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
         content: m.content,
       }));
 
-    if (settings.provider === 'openai' || settings.provider === 'glm') {
+    if (settings.provider === 'chatgpt-subscription') {
+      // ChatGPT subscription flow (regeneration, no tools)
+      const input: ResponseInputItem[] = apiMessages.map(m =>
+        m.role === 'user'
+          ? chatgptUserMessage(m.content)
+          : ({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: m.content }] } as ResponseInputItem)
+      );
+      const turn = await chatgptClient.runTurn({
+        model: settings.model,
+        instructions: systemPrompt,
+        input,
+        callbacks: {
+          onText: (delta) => {
+            fullResponse += delta;
+            res.write(`data: ${JSON.stringify({ type: 'text', content: delta })}\n\n`);
+          },
+        },
+      });
+      fullResponse = turn.text;
+    } else if (settings.provider === 'openai' || settings.provider === 'glm') {
       // OpenAI/GLM flow
       const client = new OpenAI({ 
         apiKey: settings.apiKey,
@@ -928,7 +996,7 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
     }
     
     // Build system prompt with context
-    let systemPrompt = settings.systemPrompt || 'You are Floyd, a helpful AI assistant.';
+    let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt();
     const skillsContext = skillsManager.getSystemPromptAdditions();
     if (skillsContext) {
       systemPrompt += skillsContext;
@@ -947,7 +1015,35 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
     let continuedContent = lastMessage.content;
     
     // Stream the continuation
-    if (settings.provider === 'openai' || settings.provider === 'glm') {
+    if (settings.provider === 'chatgpt-subscription') {
+      const input: ResponseInputItem[] = apiMessages.map((m: any) =>
+        m.role === 'user'
+          ? chatgptUserMessage(m.content)
+          : ({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: m.content }] } as ResponseInputItem)
+      );
+      input.push(chatgptUserMessage(`Continue your previous reply exactly where it left off. Do not repeat what was already written. Previous partial reply:\n\n${continuedContent}`));
+      const turn = await chatgptClient.runTurn({
+        model: settings.model,
+        instructions: systemPrompt,
+        input,
+      });
+      if (turn.text) {
+        continuedContent += turn.text;
+        res.write(`data: ${JSON.stringify({ type: 'text', content: turn.text })}\n\n`);
+      }
+
+      session.messages[session.messages.length - 1] = {
+        role: 'assistant',
+        content: continuedContent,
+        timestamp: Date.now(),
+      };
+      session.updated = Date.now();
+      await saveSession(session);
+
+      res.write(`data: ${JSON.stringify({ type: 'done', content: continuedContent })}\n\n`);
+      res.end();
+
+    } else if (settings.provider === 'openai' || settings.provider === 'glm') {
       const openaiClient = new OpenAI({ 
         apiKey: settings.apiKey,
         baseURL: settings.provider === 'glm' ? 'https://open.bigmodel.cn/api/paas/v4' : undefined,
@@ -1087,8 +1183,13 @@ app.delete('/api/sessions/:id', async (req, res) => {
 app.post('/api/chat', async (req, res) => {
   const { sessionId, message } = req.body;
   
-  const client = getClient();
-  if (!client) {
+  const usingChatGPT = settings.provider === 'chatgpt-subscription';
+  const client = usingChatGPT ? null : getClient();
+  if (usingChatGPT) {
+    if (!(await chatgptClient.isConfigured())) {
+      return res.status(400).json({ error: 'ChatGPT subscription not signed in. Run `codex login` to create ~/.codex/auth.json.' });
+    }
+  } else if (!client) {
     return res.status(400).json({ error: 'API key not configured' });
   }
   
@@ -1112,20 +1213,36 @@ app.post('/api/chat', async (req, res) => {
   });
   
   try {
-    const response = await (client as Anthropic).messages.create({
-      model: settings.model,
-      max_tokens: settings.maxTokens || 8192,
-      system: settings.systemPrompt,
-      messages: session.messages.map(m => ({
-        role: m.role,
-        content: m.content,
-      })),
-    });
-    
-    const assistantContent = response.content
-      .filter((block: any) => block.type === 'text')
-      .map((block: any) => block.text)
-      .join('\n');
+    let assistantContent: string;
+    let usage: unknown = undefined;
+    if (usingChatGPT) {
+      const input: ResponseInputItem[] = session.messages.map(m =>
+        m.role === 'user'
+          ? chatgptUserMessage(m.content)
+          : ({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: m.content }] } as ResponseInputItem)
+      );
+      const turn = await chatgptClient.runTurn({
+        model: settings.model,
+        instructions: settings.systemPrompt || buildDefaultSystemPrompt(),
+        input,
+      });
+      assistantContent = turn.text;
+    } else {
+      const response = await (client as Anthropic).messages.create({
+        model: settings.model,
+        max_tokens: settings.maxTokens || 8192,
+        system: settings.systemPrompt,
+        messages: session.messages.map(m => ({
+          role: m.role,
+          content: m.content,
+        })),
+      });
+      assistantContent = response.content
+        .filter((block: any) => block.type === 'text')
+        .map((block: any) => block.text)
+        .join('\n');
+      usage = response.usage;
+    }
     
     // Add assistant message
     session.messages.push({
@@ -1140,7 +1257,7 @@ app.post('/api/chat', async (req, res) => {
     res.json({
       success: true,
       response: assistantContent,
-      usage: response.usage,
+      usage,
       session: {
         id: session.id,
         title: session.title,
@@ -1156,19 +1273,19 @@ app.post('/api/chat', async (req, res) => {
 
 // Get available tools
 app.get('/api/tools', (req, res) => {
-  res.json({ tools: BUILTIN_TOOLS });
+  res.json({ tools: getAgentTools() });
 });
 
 // Execute a tool directly
 app.post('/api/tools/execute', async (req, res) => {
   const { name, args } = req.body;
-  const result = await toolExecutor.execute(name, args);
+  const result = await executeAgentTool(name, args);
   res.json(result);
 });
 
 // Convert built-in tools to Anthropic format
 function getAnthropicTools(): Anthropic.Tool[] {
-  return BUILTIN_TOOLS.map(tool => ({
+  return getAgentTools().map(tool => ({
     name: tool.name,
     description: tool.description,
     input_schema: tool.inputSchema as { type: 'object'; properties: Record<string, unknown>; required?: string[] },
@@ -1177,7 +1294,7 @@ function getAnthropicTools(): Anthropic.Tool[] {
 
 // Convert tools to OpenAI format
 function getOpenAITools() {
-  return BUILTIN_TOOLS.map(tool => ({
+  return getAgentTools().map(tool => ({
     type: 'function' as const,
     function: {
       name: tool.name,
@@ -1187,11 +1304,99 @@ function getOpenAITools() {
   }));
 }
 
+// Convert tools to ChatGPT Responses-API format
+function getChatGPTTools() {
+  return getAgentTools().map(tool => ({
+    type: 'function' as const,
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.inputSchema as Record<string, unknown>,
+  }));
+}
+
+// ---- Browork dispatch tools -------------------------------------------------
+// Expose sub-agent dispatch to the chat agent so it can delegate parallel work.
+const BROWORK_TOOLS = [
+  {
+    name: 'browork_create_task',
+    description: 'Create a Browork sub-agent task. Sub-agents run autonomously in parallel with access to file system, terminal, and code execution tools. Returns the task id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Short task name' },
+        description: { type: 'string', description: 'Detailed instructions for the sub-agent' },
+      },
+      required: ['name', 'description'],
+    },
+  },
+  {
+    name: 'browork_start_task',
+    description: 'Start a previously created Browork task. The sub-agent begins working immediately.',
+    inputSchema: {
+      type: 'object',
+      properties: { taskId: { type: 'string', description: 'Task id from browork_create_task' } },
+      required: ['taskId'],
+    },
+  },
+  {
+    name: 'browork_list_tasks',
+    description: 'List all Browork sub-agent tasks with status and progress.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'browork_get_task',
+    description: 'Get full detail of one Browork task: status, progress, logs, tool calls, and result. Poll this after starting a task.',
+    inputSchema: {
+      type: 'object',
+      properties: { taskId: { type: 'string' } },
+      required: ['taskId'],
+    },
+  },
+];
+
+/** Full tool surface offered to the chat agent. */
+function getAgentTools() {
+  return [...BUILTIN_TOOLS, ...BROWORK_TOOLS];
+}
+
+/** Execute a tool call from the chat agent, routing Browork tools to the manager. */
+async function executeAgentTool(name: string, args: Record<string, unknown>): Promise<{ success: boolean; result?: any; error?: string }> {
+  try {
+    switch (name) {
+      case 'browork_create_task': {
+        const task = broworkManager.createTask(String(args.name || 'Unnamed task'), String(args.description || ''));
+        return { success: true, result: { taskId: task.id, status: task.status } };
+      }
+      case 'browork_start_task': {
+        await broworkManager.startTask(String(args.taskId));
+        return { success: true, result: { taskId: args.taskId, status: 'running' } };
+      }
+      case 'browork_list_tasks': {
+        const tasks = broworkManager.getTasks().map(t => ({ id: t.id, name: t.name, status: t.status, progress: t.progress }));
+        return { success: true, result: { tasks } };
+      }
+      case 'browork_get_task': {
+        const task = broworkManager.getTask(String(args.taskId));
+        if (!task) return { success: false, error: 'Task not found' };
+        return { success: true, result: task };
+      }
+      default:
+        return toolExecutor.execute(name, args);
+    }
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
 // Send message (streaming with tool use) - supports both Anthropic and OpenAI
 app.post('/api/chat/stream', async (req, res) => {
   const { sessionId, message, enableTools = true } = req.body;
   
-  if (!settings.apiKey) {
+  if (settings.provider === 'chatgpt-subscription') {
+    if (!(await chatgptClient.isConfigured())) {
+      return res.status(400).json({ error: 'ChatGPT subscription not signed in. Run `codex login` (or sign in via Codex) to create ~/.codex/auth.json.' });
+    }
+  } else if (!settings.apiKey) {
     return res.status(400).json({ error: 'API key not configured' });
   }
   
@@ -1231,7 +1436,7 @@ app.post('/api/chat/stream', async (req, res) => {
   const maxTurns = 10;
   
   // Build system prompt with skills and project context
-  let systemPrompt = settings.systemPrompt || 'You are Floyd, a helpful AI assistant with access to tools for file system operations and command execution. Use tools when needed to help the user.';
+  let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt();
   
   // Add active skills
   const skillsContext = skillsManager.getSystemPromptAdditions();
@@ -1246,7 +1451,45 @@ app.post('/api/chat/stream', async (req, res) => {
   }
   
   try {
-    if (settings.provider === 'openai' || settings.provider === 'glm') {
+    if (settings.provider === 'chatgpt-subscription') {
+      // ChatGPT subscription (OAuth) flow — Responses API with tools + vision
+      const chatgptTools = enableTools ? getChatGPTTools() : undefined;
+      const input: ResponseInputItem[] = [];
+      for (const m of session.messages) {
+        if (m.role === 'user') {
+          input.push(chatgptUserMessage(m.content));
+        } else if (m.role === 'assistant') {
+          input.push({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: m.content }] });
+        }
+      }
+
+      while (turnCount < maxTurns) {
+        turnCount++;
+        const turn = await chatgptClient.runTurn({
+          model: settings.model,
+          instructions: systemPrompt,
+          input,
+          tools: chatgptTools,
+          callbacks: {
+            onText: (delta) => {
+              fullResponse += delta;
+              res.write(`data: ${JSON.stringify({ type: 'text', content: delta })}\n\n`);
+            },
+          },
+        });
+
+        input.push(...turn.outputItems);
+
+        if (turn.toolCalls.length === 0) break;
+
+        for (const call of turn.toolCalls) {
+          res.write(`data: ${JSON.stringify({ type: 'tool_call', tool: call.name, args: call.args, id: call.callId })}\n\n`);
+          const result = await executeAgentTool(call.name, call.args);
+          res.write(`data: ${JSON.stringify({ type: 'tool_result', tool: call.name, id: call.callId, result: result.success ? result.result : { error: result.error }, success: result.success })}\n\n`);
+          input.push(chatgptToolResult(call.callId, result.success ? result.result : { error: result.error }));
+        }
+      }
+    } else if (settings.provider === 'openai' || settings.provider === 'glm') {
       // OpenAI-compatible flow (OpenAI and GLM)
       const client = new OpenAI({ 
         apiKey: settings.apiKey,
@@ -1295,7 +1538,7 @@ app.post('/api/chat/stream', async (req, res) => {
             })}\n\n`);
             
             // Execute tool
-            const result = await toolExecutor.execute(toolName, toolArgs);
+            const result = await executeAgentTool(toolName, toolArgs);
             
             // Send tool result to client
             res.write(`data: ${JSON.stringify({ 
@@ -1361,7 +1604,7 @@ app.post('/api/chat/stream', async (req, res) => {
             })}\n\n`);
             
             // Execute tool
-            const result = await toolExecutor.execute(block.name, block.input as Record<string, unknown>);
+            const result = await executeAgentTool(block.name, block.input as Record<string, unknown>);
             
             // Send tool result to client
             res.write(`data: ${JSON.stringify({ 
@@ -1431,13 +1674,15 @@ app.get('*', (req, res) => {
 });
 
 // Start server
-const PORT = process.env.PORT || 3001;
+const PORT = Number(process.env.PORT) || 3001;
 
 // Also start WebSocket MCP server for Chrome extension
 initDataDir().then(async () => {
-  // Start Express API server
-  app.listen(PORT, () => {
-    console.log(`[Floyd Web Server] Running on http://localhost:${PORT}`);
+  // Start Express API server — loopback only. This server exposes file,
+  // shell, and code-execution tools with no authentication; it must never
+  // listen on external interfaces. The frame proxies locally.
+  app.listen(PORT, '127.0.0.1', () => {
+    console.log(`[Floyd Web Server] Running on http://127.0.0.1:${PORT} (loopback only)`);
     console.log(`[Floyd Web Server] API Key: ${settings.apiKey ? 'Configured' : 'NOT SET'}`);
   });
 

@@ -41,7 +41,9 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState('');
   const [showSkills, setShowSkills] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
-  const [showBrowork, setShowBrowork] = useState(false);
+  // ?browork=1 or #browork deep-links straight to the Browork panel (frame tab).
+  const [showBrowork, setShowBrowork] = useState(() =>
+    new URLSearchParams(window.location.search).has('browork') || window.location.hash === '#browork');
   const [activeToolCalls, setActiveToolCalls] = useState<Array<{
     id: string;
     tool: string;

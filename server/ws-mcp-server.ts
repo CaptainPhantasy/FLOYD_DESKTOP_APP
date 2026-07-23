@@ -183,8 +183,10 @@ export class WebSocketMCPServer {
   async start(): Promise<number> {
     return new Promise((resolve, reject) => {
       try {
-        this.server.listen(this.port, () => {
-          console.log(`[MCP-WS] Server successfully started on ws://localhost:${this.port}`);
+        // Loopback only: this WebSocket exposes unauthenticated tool execution
+        // for the local Chrome extension; it must never listen externally.
+        this.server.listen(this.port, '127.0.0.1', () => {
+          console.log(`[MCP-WS] Server successfully started on ws://127.0.0.1:${this.port} (loopback only)`);
           resolve(this.port);
         });
 

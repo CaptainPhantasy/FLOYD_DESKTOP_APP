@@ -9,8 +9,14 @@ import OpenAI from 'openai';
 import { v4 as uuidv4 } from 'uuid';
 import { ToolExecutor } from './tool-executor.js';
 import { BUILTIN_TOOLS } from './mcp-client.js';
+import {
+  ChatGPTSubscriptionClient,
+  userMessage as chatgptUserMessage,
+  toolResult as chatgptToolResult,
+  type ResponseInputItem,
+} from './chatgpt-subscription.js';
 
-export type Provider = 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
+export type Provider = 'chatgpt-subscription' | 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
 
 export type AgentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -58,6 +64,7 @@ export class BroworkManager {
   private apiKey: string = '';
   private model: string = 'claude-sonnet-4-5-20250514';
   private provider: Provider = 'anthropic';
+  private chatgptClient: ChatGPTSubscriptionClient | null = null;
   private onUpdate?: (task: AgentTask) => void;
 
   constructor(toolExecutor: ToolExecutor) {
@@ -68,6 +75,7 @@ export class BroworkManager {
   setBaseURL(url: string | undefined) { /* no-op for now unless we add support */ }
   setModel(model: string) { this.model = model; }
   setProvider(provider: Provider) { this.provider = provider; }
+  setChatGPTClient(client: ChatGPTSubscriptionClient) { this.chatgptClient = client; }
   setConfig(config: Partial<BroworkConfig>) { this.config = { ...this.config, ...config }; }
   setUpdateCallback(cb: (task: AgentTask) => void) { this.onUpdate = cb; }
 
@@ -93,7 +101,9 @@ export class BroworkManager {
     if (this.runningCount >= this.config.maxConcurrentAgents) {
       throw new Error(`Max concurrent agents (${this.config.maxConcurrentAgents}) reached`);
     }
-    if (!this.apiKey) throw new Error('API key not configured');
+    if (this.provider === 'chatgpt-subscription') {
+      if (!this.chatgptClient) throw new Error('ChatGPT client not configured');
+    } else if (!this.apiKey) throw new Error('API key not configured');
 
     task.status = 'running';
     task.started = Date.now();
@@ -177,7 +187,9 @@ Work step by step and complete the task.`;
     this.notifyUpdate(task);
 
     try {
-      if (this.provider === 'openai' || this.provider === 'glm') {
+      if (this.provider === 'chatgpt-subscription') {
+        await this.runChatGPTAgent(task, systemPrompt);
+      } else if (this.provider === 'openai' || this.provider === 'glm') {
         await this.runOpenAIAgent(task, systemPrompt);
       } else {
         await this.runAnthropicAgent(task, systemPrompt);
@@ -275,6 +287,64 @@ Work step by step and complete the task.`;
         task.completed = Date.now();
         this.log(task, 'info', 'Task completed successfully');
         break;
+      }
+    }
+  }
+
+  private async runChatGPTAgent(task: AgentTask, systemPrompt: string): Promise<void> {
+    const client = this.chatgptClient!;
+    const tools = BUILTIN_TOOLS.map(tool => ({
+      type: 'function' as const,
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.inputSchema as Record<string, unknown>,
+    }));
+
+    const input: ResponseInputItem[] = [chatgptUserMessage(`Please complete this task: ${task.description}`)];
+
+    let toolCallCount = 0;
+    const maxTurns = 15;
+
+    for (let turn = 0; turn < maxTurns && task.status === 'running'; turn++) {
+      if (Date.now() - task.started! > this.config.agentTimeout) {
+        throw new Error('Agent timeout exceeded');
+      }
+
+      const result = await client.runTurn({
+        model: this.model,
+        instructions: systemPrompt,
+        input,
+        tools,
+      });
+
+      if (result.text) {
+        this.log(task, 'thinking', result.text.slice(0, 200) + (result.text.length > 200 ? '...' : ''));
+      }
+      input.push(...result.outputItems);
+
+      if (result.toolCalls.length === 0) {
+        task.result = result.text;
+        task.status = 'completed';
+        task.progress = 100;
+        task.completed = Date.now();
+        this.log(task, 'info', 'Task completed successfully');
+        return;
+      }
+
+      for (const call of result.toolCalls) {
+        toolCallCount++;
+        if (toolCallCount > this.config.maxToolCallsPerAgent) throw new Error('Max tool calls exceeded');
+        this.log(task, 'tool', `Using ${call.name}`);
+        const toolRes = await this.toolExecutor.execute(call.name, call.args);
+        task.toolCalls.push({
+          tool: call.name,
+          args: call.args,
+          result: toolRes.success ? toolRes.result : { error: toolRes.error },
+          timestamp: Date.now(),
+        });
+        input.push(chatgptToolResult(call.callId, toolRes.success ? toolRes.result : { error: toolRes.error }));
+        task.progress = Math.min(90, 10 + (toolCallCount / this.config.maxToolCallsPerAgent) * 80);
+        this.notifyUpdate(task);
       }
     }
   }

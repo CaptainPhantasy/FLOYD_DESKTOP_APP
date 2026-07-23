@@ -13,9 +13,15 @@ interface SettingsModalProps {
   onSave: () => void;
 }
 
-type Provider = 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
+type Provider = 'chatgpt-subscription' | 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
 
 const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
+  'chatgpt-subscription': [
+    { id: 'gpt-5.5', name: 'GPT-5.5 (Most Capable)' },
+    { id: 'gpt-5.4', name: 'GPT-5.4 (Balanced)' },
+    { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini (Fast)' },
+    { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex (Coding)' },
+  ],
   anthropic: [
     { id: 'claude-sonnet-4-5-20250514', name: 'Claude 4.5 Sonnet (Recommended)' },
     { id: 'claude-opus-4-5-20250514', name: 'Claude 4.5 Opus (Most Capable)' },
@@ -63,6 +69,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('claude-sonnet-4-5-20250514');
   const [systemPrompt, setSystemPrompt] = useState('');
+  const [effectivePrompt, setEffectivePrompt] = useState('');
   const [maxTokens, setMaxTokens] = useState(16384);
   const [baseURL, setBaseURL] = useState('');
   const [hasExistingKey, setHasExistingKey] = useState(false);
@@ -81,6 +88,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
         setHasExistingKey(settings.hasApiKey);
         setKeyPreview(settings.apiKeyPreview);
         setSystemPrompt(settings.systemPrompt || '');
+        setEffectivePrompt((settings as any).effectiveSystemPrompt || '');
         setMaxTokens(settings.maxTokens || 16384);
         setBaseURL(settings.baseURL || '');
         setApiKey('');
@@ -168,6 +176,18 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button
+                onClick={() => handleProviderChange('chatgpt-subscription')}
+                className={cn(
+                  'p-3 rounded-lg border text-left transition-colors col-span-2',
+                  provider === 'chatgpt-subscription'
+                    ? 'border-emerald-500 bg-emerald-500/10 text-emerald-300'
+                    : 'border-slate-600 hover:border-slate-500'
+                )}
+              >
+                <div className="font-medium">ChatGPT Subscription</div>
+                <div className="text-xs text-slate-400">Your ChatGPT plan via OAuth — no API key needed</div>
+              </button>
+              <button
                 onClick={() => handleProviderChange('anthropic')}
                 className={cn(
                   'p-3 rounded-lg border text-left transition-colors',
@@ -218,7 +238,13 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
             </div>
           </div>
 
-          {/* API Key */}
+          {/* API Key (not needed for ChatGPT subscription) */}
+          {provider === 'chatgpt-subscription' ? (
+            <div className="text-sm text-slate-400 bg-slate-700/50 border border-slate-600 rounded px-3 py-2">
+              Uses your ChatGPT sign-in (OAuth tokens from <code className="text-slate-300">~/.codex/auth.json</code>).
+              If chat fails with an auth error, run <code className="text-slate-300">codex login</code> in a terminal and retry.
+            </div>
+          ) : (
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">
               {provider === 'anthropic' || provider === 'anthropic-compatible' ? 'Anthropic' : provider === 'openai' ? 'OpenAI' : 'GLM'} API Key
@@ -257,6 +283,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
               </div>
             )}
           </div>
+          )}
 
           {/* Base URL - only for anthropic-compatible */}
           {provider === 'anthropic-compatible' && (
@@ -316,15 +343,20 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
           {/* System Prompt */}
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">
-              System Prompt (Optional)
+              System Prompt {systemPrompt ? '(Custom)' : '(Default — capability-aware)'}
             </label>
             <textarea
-              value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
+              value={systemPrompt || effectivePrompt}
+              onChange={(e) => setSystemPrompt(e.target.value === effectivePrompt ? '' : e.target.value)}
               placeholder="Custom instructions for Floyd..."
-              rows={4}
+              rows={8}
               className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none"
             />
+            <p className="text-xs text-slate-500 mt-1">
+              {systemPrompt
+                ? 'Custom prompt overrides the default. Clear the field to restore the built-in capability-aware prompt.'
+                : 'This is the built-in prompt the agent uses. It lists every tool the agent can call — files, terminal, code, browser, Browork sub-agents. Edit to override.'}
+            </p>
           </div>
         </div>
 
