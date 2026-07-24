@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { ToolExecutor } from './tool-executor.js';
 import { BUILTIN_TOOLS } from './mcp-client.js';
 import { GATEWAY_TOOLS, isGatewayTool, executeGatewayTool, gatewayAvailable } from './mcp-gateway.js';
+import { chronoAfterToolCall } from './chrono-hook.js';
 import {
   ChatGPTSubscriptionClient,
   userMessage as chatgptUserMessage,
@@ -258,6 +259,7 @@ Work step by step and complete the task.`;
 
           this.log(task, 'tool', `Using ${block.name}`);
           const result = isGatewayTool(block.name) ? await executeGatewayTool(block.name, block.input as Record<string, unknown>) : await this.toolExecutor.execute(block.name, block.input as Record<string, unknown>);
+          chronoAfterToolCall(block.name, block.input as Record<string, unknown>, result.success);
 
           task.toolCalls.push({
             tool: block.name,
@@ -339,6 +341,7 @@ Work step by step and complete the task.`;
         if (toolCallCount > this.config.maxToolCallsPerAgent) throw new Error('Max tool calls exceeded');
         this.log(task, 'tool', `Using ${call.name}`);
         const toolRes = isGatewayTool(call.name) ? await executeGatewayTool(call.name, call.args) : await this.toolExecutor.execute(call.name, call.args);
+        chronoAfterToolCall(call.name, call.args, toolRes.success);
         task.toolCalls.push({
           tool: call.name,
           args: call.args,
@@ -407,6 +410,7 @@ Work step by step and complete the task.`;
 
           this.log(task, 'tool', `Using ${toolName}`);
           const result = isGatewayTool(toolName) ? await executeGatewayTool(toolName, toolArgs) : await this.toolExecutor.execute(toolName, toolArgs);
+          chronoAfterToolCall(toolName, toolArgs, result.success);
 
           task.toolCalls.push({
             tool: toolName,

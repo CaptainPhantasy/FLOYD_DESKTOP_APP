@@ -18,6 +18,7 @@ import { config } from 'dotenv';
 import { ToolExecutor } from './tool-executor.js';
 import { BUILTIN_TOOLS, MCPClient } from './mcp-client.js';
 import { GATEWAY_TOOLS, isGatewayTool, executeGatewayTool, gatewayAvailable } from './mcp-gateway.js';
+import { chronoAfterToolCall } from './chrono-hook.js';
 import { SkillsManager, Skill } from './skills-manager.js';
 import { ProjectsManager, Project } from './projects-manager.js';
 import { BroworkManager, AgentTask, Provider as BroworkProvider } from './browork-manager.js';
@@ -1412,8 +1413,11 @@ async function executeAgentTool(name: string, args: Record<string, unknown>): Pr
         if (!task) return { success: false, error: 'Task not found' };
         return { success: true, result: task };
       }
-      default:
-        return toolExecutor.execute(name, args);
+      default: {
+        const result = await toolExecutor.execute(name, args);
+        chronoAfterToolCall(name, args, result.success);
+        return result;
+      }
     }
   } catch (err: any) {
     return { success: false, error: err.message };
