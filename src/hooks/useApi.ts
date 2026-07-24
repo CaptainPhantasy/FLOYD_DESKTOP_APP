@@ -105,7 +105,15 @@ export function useApi() {
     onDone: (usage: any, sessionId: string) => void,
     onError: (error: string) => void,
     onToolCall?: (tool: string, args: any, id: string) => void,
-    onToolResult?: (tool: string, id: string, result: any, success: boolean) => void
+    onToolResult?: (tool: string, id: string, result: any, success: boolean) => void,
+    attachments?: Array<{
+      id: string;
+      name: string;
+      size: number;
+      type: string;
+      mimeType: string;
+      data: string;
+    }>
   ) => {
     setLoading(true);
     setError(null);
@@ -114,7 +122,7 @@ export function useApi() {
       const response = await fetch(`${API_BASE}/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, message, enableTools: true }),
+        body: JSON.stringify({ sessionId, message, enableTools: true, attachments: attachments || [] }),
       });
       
       if (!response.ok) {
@@ -177,6 +185,36 @@ export function useApi() {
     });
   }, [fetchJson]);
 
+  // Upload files (photos, videos, documents, folders) for chat attachments
+  const uploadFiles = useCallback(async (files: File[]) => {
+    const formData = new FormData();
+    files.forEach(file => {
+      formData.append('files', file);
+    });
+
+    const response = await fetch(`${API_BASE}/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+
+    return response.json() as Promise<{
+      success: boolean;
+      files: Array<{
+        id: string;
+        name: string;
+        size: number;
+        type: 'image' | 'video' | 'document' | 'code' | 'data';
+        mimeType: string;
+        data: string;
+      }>;
+    }>;
+  }, []);
+
   return {
     loading,
     error,
@@ -193,5 +231,6 @@ export function useApi() {
     sendMessageStream,
     getTools,
     executeTool,
+    uploadFiles,
   };
 }

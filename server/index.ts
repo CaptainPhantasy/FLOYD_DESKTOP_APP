@@ -7,6 +7,7 @@
 
 import express from 'express';
 import cors from 'cors';
+import multer from 'multer';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { v4 as uuidv4 } from 'uuid';
@@ -75,7 +76,24 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// 50MB JSON limit to support base64-encoded attachments in chat requests
+app.use(express.json({ limit: '50mb' }));
+
+// Multer for file/folder uploads (photos, videos, documents, code)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024,
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedExt = /\.(jpe?g|png|gif|webp|tiff?|pdf|docx?|txt|md|mp4|mov|webm|avi|js|ts|tsx|jsx|py|java|c|cpp|cs|go|rb|php|html|css|json|xml|ya?ml|csv)$/i;
+    const allowedMime = /^(image|video|text)\/|pdf|document|json|xml|yaml|javascript|typescript|markdown|octet-stream/i;
+    if (allowedExt.test(file.originalname) || allowedMime.test(file.mimetype)) {
+      return cb(null, true);
+    }
+    cb(new Error(`Invalid file type: ${file.originalname}`));
+  },
+});
 
 // Serve static frontend files from dist/
 const distPath = path.join(__dirname, '../dist');
@@ -85,10 +103,20 @@ app.use(express.static(distPath));
 const DATA_DIR = path.join(__dirname, '../.floyd-data');
 
 // Types
+interface Attachment {
+  id: string;
+  name: string;
+  size: number;
+  type: 'image' | 'video' | 'document' | 'code' | 'data';
+  mimeType: string;
+  data: string; // base64
+}
+
 interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp?: number;
+  attachments?: Attachment[];
 }
 
 interface Session {
@@ -1388,9 +1416,106 @@ async function executeAgentTool(name: string, args: Record<string, unknown>): Pr
   }
 }
 
+// ---- Attachment helpers ----------------------------------------------------
+// Convert uploaded attachments into provider-specific content blocks.
+function attachmentTextBlock(att: Attachment): string | null {
+  // Inline code/data/plain-text files as fenced text the model can read.
+  const textLike = att.type === 'code' || att.type === 'data' ||
+    (att.mimeType || '').startsWith('text/') || (att.mimeType || '').includes('markdown');
+  if (!textLike) return null;
+  try {
+    const text = Buffer.from(att.data, 'base64').toString('utf8');
+    return `[Attached file: ${att.name}]\n\`\`\`\n${text}\n\`\`\``;
+  } catch {
+    return null;
+  }
+}
+
+function buildUserContent(provider: Provider, content: string, attachments?: Attachment[]): any {
+  if (!attachments || attachments.length === 0) return content;
+  const blocks: any[] = [];
+  for (const att of attachments) {
+    if (att.type === 'image') {
+      if (provider === 'openai' || provider === 'glm') {
+        blocks.push({ type: 'image_url', image_url: { url: `data:${att.mimeType || 'image/jpeg'};base64,${att.data}` } });
+      } else {
+        blocks.push({ type: 'image', source: { type: 'base64', media_type: att.mimeType || 'image/jpeg', data: att.data } });
+      }
+      continue;
+    }
+    if ((att.mimeType || '') === 'application/pdf' && provider !== 'openai' && provider !== 'glm') {
+      blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: att.data } });
+      continue;
+    }
+    const textBlock = attachmentTextBlock(att);
+    if (textBlock) {
+      blocks.push({ type: 'text', text: textBlock });
+    } else {
+      blocks.push({ type: 'text', text: `[Attachment "${att.name}" (${att.mimeType}, ${att.size} bytes) was uploaded but this file type cannot be read directly by the current provider.]` });
+    }
+  }
+  blocks.push({ type: 'text', text: content });
+  return blocks;
+}
+
+// ChatGPT subscription path: images ride input_image, text-like files are inlined.
+function chatgptMessageParts(content: string, attachments?: Attachment[]): { text: string; images: Array<{ mediaType: string; base64: string }> } {
+  if (!attachments || attachments.length === 0) return { text: content, images: [] };
+  const images: Array<{ mediaType: string; base64: string }> = [];
+  let text = '';
+  for (const att of attachments) {
+    if (att.type === 'image') {
+      images.push({ mediaType: att.mimeType || 'image/jpeg', base64: att.data });
+      continue;
+    }
+    const textBlock = attachmentTextBlock(att);
+    if (textBlock) text += textBlock + '\n\n';
+    else text += `[Attachment "${att.name}" (${att.mimeType}, ${att.size} bytes) was uploaded but cannot be read directly.]\n\n`;
+  }
+  text += content;
+  return { text, images };
+}
+
+// File upload endpoint: accepts photos, videos, documents, code, and folder
+// contents (folders arrive as their constituent files with relative paths).
+app.post('/api/upload', upload.array('files', 100), async (req, res) => {
+  try {
+    if (!req.files || (req.files as Express.Multer.File[]).length === 0) {
+      return res.status(400).json({ error: 'No files uploaded' });
+    }
+
+    const files = req.files as Express.Multer.File[];
+    const uploadedFiles = files.map(file => {
+      const fileType = file.mimetype.startsWith('image/') ? 'image' :
+                       file.mimetype.startsWith('video/') ? 'video' :
+                       file.mimetype.includes('pdf') || file.mimetype.includes('document') ? 'document' :
+                       file.mimetype.includes('text') || file.mimetype.includes('markdown') ? 'code' :
+                       'data';
+
+      return {
+        id: uuidv4(),
+        name: file.originalname,
+        size: file.size,
+        type: fileType,
+        mimeType: file.mimetype,
+        data: file.buffer.toString('base64'),
+      };
+    });
+
+    res.json({ success: true, files: uploadedFiles });
+  } catch (error: any) {
+    console.error('[Server] Upload error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to upload files' });
+  }
+});
+
 // Send message (streaming with tool use) - supports both Anthropic and OpenAI
 app.post('/api/chat/stream', async (req, res) => {
-  const { sessionId, message, enableTools = true } = req.body;
+  const { sessionId, message = '', enableTools = true, attachments = [] } = req.body as { sessionId: string; message?: string; enableTools?: boolean; attachments?: Attachment[] };
+
+  if (!message && attachments.length === 0) {
+    return res.status(400).json({ error: 'Message or attachments are required' });
+  }
   
   if (settings.provider === 'chatgpt-subscription') {
     if (!(await chatgptClient.isConfigured())) {
@@ -1404,7 +1529,7 @@ app.post('/api/chat/stream', async (req, res) => {
   if (!session) {
     session = {
       id: sessionId || uuidv4(),
-      title: message.slice(0, 50) + (message.length > 50 ? '...' : ''),
+      title: (message || 'Attachments').slice(0, 50) + (message.length > 50 ? '...' : ''),
       created: Date.now(),
       updated: Date.now(),
       messages: [],
@@ -1420,16 +1545,18 @@ app.post('/api/chat/stream', async (req, res) => {
   // Build messages for API
   const apiMessages: any[] = [];
   
-  // Add existing session messages
+  // Add existing session messages (attachment-aware for user turns)
   for (const m of session.messages) {
-    if (m.role === 'user' || m.role === 'assistant') {
+    if (m.role === 'user') {
+      apiMessages.push({ role: 'user', content: buildUserContent(settings.provider, m.content, m.attachments) });
+    } else if (m.role === 'assistant') {
       apiMessages.push({ role: m.role, content: m.content });
     }
   }
   
   // Add new user message
-  apiMessages.push({ role: 'user', content: message });
-  session.messages.push({ role: 'user', content: message, timestamp: Date.now() });
+  apiMessages.push({ role: 'user', content: buildUserContent(settings.provider, message, attachments) });
+  session.messages.push({ role: 'user', content: message, timestamp: Date.now(), attachments: attachments.length > 0 ? attachments : undefined });
   
   let fullResponse = '';
   let turnCount = 0;
@@ -1457,7 +1584,8 @@ app.post('/api/chat/stream', async (req, res) => {
       const input: ResponseInputItem[] = [];
       for (const m of session.messages) {
         if (m.role === 'user') {
-          input.push(chatgptUserMessage(m.content));
+          const parts = chatgptMessageParts(m.content, m.attachments);
+          input.push(chatgptUserMessage(parts.text, parts.images.length > 0 ? parts.images : undefined));
         } else if (m.role === 'assistant') {
           input.push({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: m.content }] });
         }

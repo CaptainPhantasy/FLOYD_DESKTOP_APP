@@ -5,7 +5,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useApi } from '@/hooks/useApi';
 import { cn } from '@/lib/utils';
-import type { Session, Message, Settings } from '@/types';
+import type { Session, Message, Settings, Attachment } from '@/types';
 import { SettingsModal } from '@/components/SettingsModal';
 import { Sidebar } from '@/components/Sidebar';
 import { ChatMessage } from '@/components/ChatMessage';
@@ -13,6 +13,7 @@ import { ToolCallCard } from '@/components/ToolCallCard';
 import { SkillsPanel } from '@/components/SkillsPanel';
 import { ProjectsPanel } from '@/components/ProjectsPanel';
 import { BroworkPanel } from '@/components/BroworkPanel';
+import { FileInput, type FileAttachment } from '@/components/FileInput';
 import { 
   Settings as SettingsIcon, 
   Send, 
@@ -33,6 +34,7 @@ export default function App() {
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
   const [_settings, setSettings] = useState<Settings | null>(null);
@@ -110,12 +112,28 @@ export default function App() {
 
   // Handle send message
   const handleSend = async () => {
-    if (!input.trim() || isStreaming || !currentSession) return;
-    
+    if ((!input.trim() && attachments.length === 0) || isStreaming || !currentSession) return;
+
+    // Upload attachments first so the server holds base64 payloads
+    let uploadedAttachments: Attachment[] = [];
+    if (attachments.length > 0) {
+      try {
+        const uploadResult = await api.uploadFiles(attachments.map(a => a.file));
+        if (uploadResult.success) {
+          uploadedAttachments = uploadResult.files;
+        }
+      } catch (err: any) {
+        setStatusMessage(`Upload error: ${err.message}`);
+        return;
+      }
+      setAttachments([]);
+    }
+
     const userMessage: Message = {
       role: 'user',
       content: input.trim(),
       timestamp: Date.now(),
+      attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
     };
     
     setMessages(prev => [...prev, userMessage]);
@@ -177,7 +195,8 @@ export default function App() {
               ? { ...tc, result, success, isExecuting: false }
               : tc
           ));
-        }
+        },
+        uploadedAttachments.length > 0 ? uploadedAttachments : undefined
       );
     } catch (err: any) {
       setStatusMessage(`Error: ${err.message}`);
@@ -465,35 +484,58 @@ export default function App() {
 
         {/* Input */}
         <div className="border-t border-slate-700 p-4">
-          <div className="flex gap-2">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyPress}
-              placeholder={status === 'ready' ? 'Type a message...' : 'Configure API key in settings...'}
-              disabled={status !== 'ready' || isStreaming}
-              className={cn(
-                'flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-3',
-                'resize-none focus:outline-none focus:ring-2 focus:ring-sky-500',
-                'placeholder:text-slate-500 disabled:opacity-50',
-              )}
-              rows={1}
-            />
-            <button
-              onClick={handleSend}
-              disabled={!input.trim() || status !== 'ready' || isStreaming}
-              className={cn(
-                'px-4 py-2 bg-sky-600 rounded-lg transition-colors',
-                'hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed',
-              )}
-            >
-              {isStreaming ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <Send className="w-5 h-5" />
-              )}
-            </button>
+          <div className="flex flex-col gap-2">
+            {/* Attachment preview strip */}
+            {attachments.length > 0 && (
+              <div className="px-2">
+                <FileInput
+                  attachments={attachments}
+                  onAttachmentsChange={setAttachments}
+                  disabled={status !== 'ready' || isStreaming}
+                  chipsOnly
+                />
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              {/* File / folder attach buttons */}
+              <div className="flex items-start">
+                <FileInput
+                  attachments={attachments}
+                  onAttachmentsChange={setAttachments}
+                  disabled={status !== 'ready' || isStreaming}
+                />
+              </div>
+
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyPress}
+                placeholder={status === 'ready' ? 'Type a message...' : 'Configure API key in settings...'}
+                disabled={status !== 'ready' || isStreaming}
+                className={cn(
+                  'flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-3',
+                  'resize-none focus:outline-none focus:ring-2 focus:ring-sky-500',
+                  'placeholder:text-slate-500 disabled:opacity-50',
+                )}
+                rows={1}
+              />
+              <button
+                onClick={handleSend}
+                disabled={(!input.trim() && attachments.length === 0) || status !== 'ready' || isStreaming}
+                className={cn(
+                  'px-4 py-2 bg-sky-600 rounded-lg transition-colors',
+                  'hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed',
+                )}
+              >
+                {isStreaming ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Send className="w-5 h-5" />
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
