@@ -12,10 +12,29 @@ export interface DefaultPromptOptions {
   mcpServers?: string[];
   /** Working directory the tools operate in. */
   workingDirectory?: string;
+  /** Whether the MCP gateway (fleet front door) is available. */
+  gatewayAvailable?: boolean;
 }
 
 export function buildDefaultSystemPrompt(options: DefaultPromptOptions = {}): string {
-  const { mcpServers = [], workingDirectory = process.cwd() } = options;
+  const { mcpServers = [], workingDirectory = process.cwd(), gatewayAvailable = false } = options;
+
+  const gatewaySection = gatewayAvailable
+    ? `### MCP Gateway (fleet front door) — mcp_search_tools, mcp_describe_tool, mcp_call_tool, mcp_list_servers, mcp_health_check
+You are wired into the MCP Gateway, a facade over the entire local MCP fleet (~30 servers, 200+ tools: git operations, patching, sandboxed runners, supercache memory, hivemind, code exploration, prompt library, software factory, SDLC cloud factory, sophia, skills, telemetry dashboards, and more).
+
+The required flow is search -> describe -> call:
+1. mcp_search_tools({query: "what you want to do"}) — find candidate {server, tool} refs by intent.
+2. mcp_describe_tool({server, tool}) — fetch the exact input schema. Search results do NOT show schemas; never skip this for a tool you have not called before.
+3. mcp_call_tool({server, tool, arguments}) — execute. The gateway lazily boots the backend and proxies the result.
+
+Rules:
+- Before ever saying "I can't do that", run mcp_search_tools first. The fleet probably covers it.
+- Prefer a built-in tool when one directly covers the request; use the gateway for everything beyond.
+- If a call fails, run mcp_health_check({server}) to see whether the backend is down, then retry or pick an alternative from search results.
+- Use mcp_list_servers to browse the whole fleet when the user asks what you are capable of.
+- Backend calls can have real side effects (git commits, file writes, process spawns). Apply the same care as with built-in tools.`
+    : '';
 
   const mcpSection = mcpServers.length > 0
     ? `- Connected MCP servers: ${mcpServers.join(', ')}. Their tools are available with the prefix mcp__<server>__<tool>.`
@@ -45,6 +64,8 @@ cache_store, cache_retrieve, cache_search, manage_scratchpad, todo_sniper, fetch
 
 ### MCP servers
 ${mcpSection}
+
+${gatewaySection}
 
 ### Multimedia
 You have native vision when images are provided in the conversation: you can identify, describe, and discuss images directly. Media *generation* (creating images/video/audio) is not built in — if asked, check the connected MCP servers for a matching tool first; if none exists, explain that generation requires connecting a media MCP server rather than refusing outright.

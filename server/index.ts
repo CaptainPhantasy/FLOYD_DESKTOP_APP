@@ -17,6 +17,7 @@ import { fileURLToPath } from 'url';
 import { config } from 'dotenv';
 import { ToolExecutor } from './tool-executor.js';
 import { BUILTIN_TOOLS, MCPClient } from './mcp-client.js';
+import { GATEWAY_TOOLS, isGatewayTool, executeGatewayTool, gatewayAvailable } from './mcp-gateway.js';
 import { SkillsManager, Skill } from './skills-manager.js';
 import { ProjectsManager, Project } from './projects-manager.js';
 import { BroworkManager, AgentTask, Provider as BroworkProvider } from './browork-manager.js';
@@ -359,7 +360,7 @@ app.get('/api/settings', (req, res) => {
     systemPrompt: settings.systemPrompt,
     // The prompt actually used when systemPrompt is empty — shown in the UI so
     // the operator always sees what the agent knows about its capabilities.
-    effectiveSystemPrompt: settings.systemPrompt || buildDefaultSystemPrompt(),
+    effectiveSystemPrompt: settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable() }),
     maxTokens: settings.maxTokens,
     baseURL: settings.baseURL,
   });
@@ -855,7 +856,7 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
   let fullResponse = '';
   
   // Build system prompt
-  let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt();
+  let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable() });
   
   // Add active skills
   const skillsContext = skillsManager.getSystemPromptAdditions();
@@ -1024,7 +1025,7 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
     }
     
     // Build system prompt with context
-    let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt();
+    let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable() });
     const skillsContext = skillsManager.getSystemPromptAdditions();
     if (skillsContext) {
       systemPrompt += skillsContext;
@@ -1251,7 +1252,7 @@ app.post('/api/chat', async (req, res) => {
       );
       const turn = await chatgptClient.runTurn({
         model: settings.model,
-        instructions: settings.systemPrompt || buildDefaultSystemPrompt(),
+        instructions: settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable() }),
         input,
       });
       assistantContent = turn.text;
@@ -1384,12 +1385,15 @@ const BROWORK_TOOLS = [
 
 /** Full tool surface offered to the chat agent. */
 function getAgentTools() {
-  return [...BUILTIN_TOOLS, ...BROWORK_TOOLS];
+  return [...BUILTIN_TOOLS, ...BROWORK_TOOLS, ...(gatewayAvailable() ? GATEWAY_TOOLS : [])];
 }
 
 /** Execute a tool call from the chat agent, routing Browork tools to the manager. */
 async function executeAgentTool(name: string, args: Record<string, unknown>): Promise<{ success: boolean; result?: any; error?: string }> {
   try {
+    if (isGatewayTool(name)) {
+      return await executeGatewayTool(name, args);
+    }
     switch (name) {
       case 'browork_create_task': {
         const task = broworkManager.createTask(String(args.name || 'Unnamed task'), String(args.description || ''));
@@ -1563,7 +1567,7 @@ app.post('/api/chat/stream', async (req, res) => {
   const maxTurns = 10;
   
   // Build system prompt with skills and project context
-  let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt();
+  let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable() });
   
   // Add active skills
   const skillsContext = skillsManager.getSystemPromptAdditions();
