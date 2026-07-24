@@ -56,7 +56,7 @@ export function chronoToolsAvailable(): boolean {
 export const CHRONO_TOOLS = [
   {
     name: 'chrono_snapshot',
-    description: 'Take a linear micro-snapshot (git commit of all current changes) of a surface repo. This is your manual save point. A snapshot is also taken automatically after every mutating tool call, but call this before starting anything risky or multi-step. Returns the snapshot sha. Safe: never loses work.',
+    description: 'Take a shadow snapshot of a surface repo: the full working tree (including uncommitted and untracked files) is captured on a hidden ref (refs/chrono/snapshots). The branch, git log, git status, and the index are NEVER touched — snapshots are invisible to normal git. Automatic after every mutating tool call; call manually before risky multi-step work. Safe: never loses or commits work.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -67,7 +67,7 @@ export const CHRONO_TOOLS = [
   },
   {
     name: 'chrono_log',
-    description: 'List recent snapshots/commits of a surface repo with sha, time, and subject. Use to find the rewind target. Read-only.',
+    description: 'List shadow snapshots (newest first) with sha, time, and subject. These are the valid chrono_rewind targets. Branch commits are NOT rewind targets — use this, not git log. Read-only.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -78,13 +78,12 @@ export const CHRONO_TOOLS = [
   },
   {
     name: 'chrono_rewind',
-    description: 'Rewind a surface repo to an earlier snapshot. SAFETY: a pre-rewind snapshot is taken automatically first, and the result includes a recovery_hint to undo the rewind itself. Default mode preserves uncommitted work (fails rather than clobbering it); pass hard=true ONLY when the user explicitly wants to discard current changes. Use chrono_log first to pick the target sha.',
+    description: 'Restore the working tree of a surface repo to a snapshot state. HEAD and the branch are never moved — this only rewrites files (adds, restores, and deletes to match the snapshot). A pre-rewind safety snapshot is always taken automatically first and the result includes a recovery_hint, so every rewind is undoable. Defaults to the latest snapshot. Use chrono_log to pick a target sha.',
     inputSchema: {
       type: 'object',
       properties: {
         surface: { type: 'string', enum: Object.keys(CHRONO_REPOS) },
-        to: { type: 'string', description: 'Target ref/sha (default HEAD~1)' },
-        hard: { type: 'boolean', description: 'Discard uncommitted changes too. Destructive — only with explicit user consent.' },
+        to: { type: 'string', description: 'Target snapshot sha from chrono_log (default: latest snapshot)' },
       },
     },
   },
@@ -172,21 +171,12 @@ export async function executeChronoTool(name: string, args: Record<string, unkno
     case 'chrono_snapshot':
       return run(repo, ['snapshot', ...(args.message ? ['-m', String(args.message)] : [])]);
     case 'chrono_log': {
-      // Read-only git log, same shape as the frame's /log endpoint.
+      // Shadow snapshot timeline — these are the rewind targets.
       const n = Math.min(Number(args.n) || 15, 60);
-      return new Promise((done) => {
-        execFile('git', ['log', `--max-count=${n}`, '--pretty=format:%h|%ad|%s', '--date=format:%H:%M:%S'], { cwd: repo, timeout: 15000 }, (err, stdout) => {
-          if (err) return done({ success: false, error: String(err).slice(0, 300) });
-          const commits = stdout.split('\n').filter(Boolean).map((l) => {
-            const [sha, time, ...rest] = l.split('|');
-            return { sha, time, subject: rest.join('|') };
-          });
-          done({ success: true, result: { ok: true, commits } });
-        });
-      });
+      return run(repo, ['timeline', '-n', String(n)]);
     }
     case 'chrono_rewind':
-      return run(repo, ['rewind', ...(args.to ? ['--to', String(args.to)] : []), ...(args.hard === true ? ['--hard'] : [])]);
+      return run(repo, ['rewind', ...(args.to ? ['--to', String(args.to)] : [])]);
     case 'chrono_fork': {
       const names = Array.isArray(args.names) ? args.names.map(String) : [];
       if (!names.length || names.some((n) => !NAME_RE.test(n))) {

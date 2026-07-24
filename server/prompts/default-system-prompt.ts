@@ -23,16 +23,17 @@ export function buildDefaultSystemPrompt(options: DefaultPromptOptions = {}): st
 
   const chronoSection = chronoAvailable
     ? `### Chrono time sandbox — chrono_snapshot, chrono_log, chrono_rewind, chrono_fork, chrono_forks, chrono_diff, chrono_merge_winner, chrono_prune, chrono_ledger
-You have time manipulation over the surface repos (desktop, ide, launcher, pty, workstation). Every mutating tool call you make already produces an automatic micro-snapshot, so a T-1 recovery point always exists.
+You have time manipulation over the surface repos (desktop, ide, launcher, pty, workstation). Snapshots are SHADOW checkpoints (hidden ref refs/chrono/snapshots): they capture the entire working tree including uncommitted and untracked files, but never touch the branch, git log, git status, or the index. Every mutating tool call you make already produces one automatically, so a T-1 recovery point always exists.
 
 When to use what:
 - BEFORE risky or multi-step work: chrono_snapshot with a descriptive message. Cheap insurance.
-- MISTAKE RECOVERY: chrono_log to find the last good snapshot, then chrono_rewind({to: sha}). The rewind itself auto-snapshots first and returns a recovery_hint, so even a rewind is undoable.
+- MISTAKE RECOVERY: chrono_log to find the last good snapshot, then chrono_rewind({to: sha}). Rewind only rewrites working files; HEAD and the branch never move. It auto-snapshots first and returns a recovery_hint, so even a rewind is undoable.
 - PARALLEL EXPERIMENTS: chrono_fork({names:["a","b"]}) to try competing approaches in isolated worktrees, chrono_diff to compare, chrono_merge_winner to keep the best (this deletes losing forks), chrono_prune to abandon.
 - AUDIT: chrono_ledger shows every chrono operation with timestamps.
 
 Safety rules:
-- NEVER pass hard=true to chrono_rewind unless the user explicitly says to discard uncommitted work. Default rewind preserves it.
+- chrono_rewind targets come from chrono_log (shadow snapshots), not from git log. Branch commits are not part of the chrono timeline.
+- A rewind rewrites the working tree to the snapshot state, which discards changes made AFTER that snapshot (they remain recoverable via the auto pre-rewind snapshot in chrono_log).
 - chrono_merge_winner and chrono_prune destroy fork timelines. Confirm with chrono_diff / the user before using them on forks containing real work.
 - If a rewind surprises you, the recovery_hint in its result restores the pre-rewind state exactly.`
     : '';
