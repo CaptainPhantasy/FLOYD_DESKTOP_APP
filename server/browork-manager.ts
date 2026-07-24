@@ -9,6 +9,7 @@ import OpenAI from 'openai';
 import { v4 as uuidv4 } from 'uuid';
 import { ToolExecutor } from './tool-executor.js';
 import { BUILTIN_TOOLS } from './mcp-client.js';
+import { GATEWAY_TOOLS, isGatewayTool, executeGatewayTool, gatewayAvailable } from './mcp-gateway.js';
 import {
   ChatGPTSubscriptionClient,
   userMessage as chatgptUserMessage,
@@ -215,7 +216,8 @@ Work step by step and complete the task.`;
 
   private async runAnthropicAgent(task: AgentTask, systemPrompt: string): Promise<void> {
     const client = new Anthropic({ apiKey: this.apiKey });
-    const tools = BUILTIN_TOOLS.map(tool => ({
+    const agentTools = [...BUILTIN_TOOLS, ...(gatewayAvailable() ? GATEWAY_TOOLS : [])];
+    const tools = agentTools.map(tool => ({
       name: tool.name,
       description: tool.description,
       input_schema: tool.inputSchema as { type: 'object'; properties: Record<string, unknown>; required?: string[] },
@@ -255,7 +257,7 @@ Work step by step and complete the task.`;
           if (toolCallCount > this.config.maxToolCallsPerAgent) throw new Error('Max tool calls exceeded');
 
           this.log(task, 'tool', `Using ${block.name}`);
-          const result = await this.toolExecutor.execute(block.name, block.input as Record<string, unknown>);
+          const result = isGatewayTool(block.name) ? await executeGatewayTool(block.name, block.input as Record<string, unknown>) : await this.toolExecutor.execute(block.name, block.input as Record<string, unknown>);
 
           task.toolCalls.push({
             tool: block.name,
@@ -293,7 +295,8 @@ Work step by step and complete the task.`;
 
   private async runChatGPTAgent(task: AgentTask, systemPrompt: string): Promise<void> {
     const client = this.chatgptClient!;
-    const tools = BUILTIN_TOOLS.map(tool => ({
+    const agentTools = [...BUILTIN_TOOLS, ...(gatewayAvailable() ? GATEWAY_TOOLS : [])];
+    const tools = agentTools.map(tool => ({
       type: 'function' as const,
       name: tool.name,
       description: tool.description,
@@ -335,7 +338,7 @@ Work step by step and complete the task.`;
         toolCallCount++;
         if (toolCallCount > this.config.maxToolCallsPerAgent) throw new Error('Max tool calls exceeded');
         this.log(task, 'tool', `Using ${call.name}`);
-        const toolRes = await this.toolExecutor.execute(call.name, call.args);
+        const toolRes = isGatewayTool(call.name) ? await executeGatewayTool(call.name, call.args) : await this.toolExecutor.execute(call.name, call.args);
         task.toolCalls.push({
           tool: call.name,
           args: call.args,
@@ -354,7 +357,8 @@ Work step by step and complete the task.`;
       apiKey: this.apiKey,
       baseURL: this.provider === 'glm' ? 'https://open.bigmodel.cn/api/paas/v4' : undefined,
     });
-    const tools = BUILTIN_TOOLS.map(tool => ({
+    const agentTools = [...BUILTIN_TOOLS, ...(gatewayAvailable() ? GATEWAY_TOOLS : [])];
+    const tools = agentTools.map(tool => ({
       type: 'function' as const,
       function: {
         name: tool.name,
@@ -402,7 +406,7 @@ Work step by step and complete the task.`;
           const toolArgs = JSON.parse((toolCall as any).function.arguments);
 
           this.log(task, 'tool', `Using ${toolName}`);
-          const result = await this.toolExecutor.execute(toolName, toolArgs);
+          const result = isGatewayTool(toolName) ? await executeGatewayTool(toolName, toolArgs) : await this.toolExecutor.execute(toolName, toolArgs);
 
           task.toolCalls.push({
             tool: toolName,
