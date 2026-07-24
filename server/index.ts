@@ -19,6 +19,7 @@ import { ToolExecutor } from './tool-executor.js';
 import { BUILTIN_TOOLS, MCPClient } from './mcp-client.js';
 import { GATEWAY_TOOLS, isGatewayTool, executeGatewayTool, gatewayAvailable } from './mcp-gateway.js';
 import { chronoAfterToolCall } from './chrono-hook.js';
+import { CHRONO_TOOLS, isChronoTool, executeChronoTool, chronoToolsAvailable } from './chrono-tools.js';
 import { SkillsManager, Skill } from './skills-manager.js';
 import { ProjectsManager, Project } from './projects-manager.js';
 import { BroworkManager, AgentTask, Provider as BroworkProvider } from './browork-manager.js';
@@ -361,7 +362,7 @@ app.get('/api/settings', (req, res) => {
     systemPrompt: settings.systemPrompt,
     // The prompt actually used when systemPrompt is empty — shown in the UI so
     // the operator always sees what the agent knows about its capabilities.
-    effectiveSystemPrompt: settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable() }),
+    effectiveSystemPrompt: settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable(), chronoAvailable: chronoToolsAvailable() }),
     maxTokens: settings.maxTokens,
     baseURL: settings.baseURL,
   });
@@ -857,7 +858,7 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
   let fullResponse = '';
   
   // Build system prompt
-  let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable() });
+  let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable(), chronoAvailable: chronoToolsAvailable() });
   
   // Add active skills
   const skillsContext = skillsManager.getSystemPromptAdditions();
@@ -1026,7 +1027,7 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
     }
     
     // Build system prompt with context
-    let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable() });
+    let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable(), chronoAvailable: chronoToolsAvailable() });
     const skillsContext = skillsManager.getSystemPromptAdditions();
     if (skillsContext) {
       systemPrompt += skillsContext;
@@ -1253,7 +1254,7 @@ app.post('/api/chat', async (req, res) => {
       );
       const turn = await chatgptClient.runTurn({
         model: settings.model,
-        instructions: settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable() }),
+        instructions: settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable(), chronoAvailable: chronoToolsAvailable() }),
         input,
       });
       assistantContent = turn.text;
@@ -1386,7 +1387,12 @@ const BROWORK_TOOLS = [
 
 /** Full tool surface offered to the chat agent. */
 function getAgentTools() {
-  return [...BUILTIN_TOOLS, ...BROWORK_TOOLS, ...(gatewayAvailable() ? GATEWAY_TOOLS : [])];
+  return [
+    ...BUILTIN_TOOLS,
+    ...BROWORK_TOOLS,
+    ...(gatewayAvailable() ? GATEWAY_TOOLS : []),
+    ...(chronoToolsAvailable() ? CHRONO_TOOLS : []),
+  ];
 }
 
 /** Execute a tool call from the chat agent, routing Browork tools to the manager. */
@@ -1394,6 +1400,9 @@ async function executeAgentTool(name: string, args: Record<string, unknown>): Pr
   try {
     if (isGatewayTool(name)) {
       return await executeGatewayTool(name, args);
+    }
+    if (isChronoTool(name)) {
+      return await executeChronoTool(name, args);
     }
     switch (name) {
       case 'browork_create_task': {
@@ -1571,7 +1580,7 @@ app.post('/api/chat/stream', async (req, res) => {
   const maxTurns = 10;
   
   // Build system prompt with skills and project context
-  let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable() });
+  let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable(), chronoAvailable: chronoToolsAvailable() });
   
   // Add active skills
   const skillsContext = skillsManager.getSystemPromptAdditions();

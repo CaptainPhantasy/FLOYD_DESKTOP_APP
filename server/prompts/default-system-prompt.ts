@@ -14,10 +14,28 @@ export interface DefaultPromptOptions {
   workingDirectory?: string;
   /** Whether the MCP gateway (fleet front door) is available. */
   gatewayAvailable?: boolean;
+  /** Whether the chrono time-sandbox tools are available. */
+  chronoAvailable?: boolean;
 }
 
 export function buildDefaultSystemPrompt(options: DefaultPromptOptions = {}): string {
-  const { mcpServers = [], workingDirectory = process.cwd(), gatewayAvailable = false } = options;
+  const { mcpServers = [], workingDirectory = process.cwd(), gatewayAvailable = false, chronoAvailable = false } = options;
+
+  const chronoSection = chronoAvailable
+    ? `### Chrono time sandbox — chrono_snapshot, chrono_log, chrono_rewind, chrono_fork, chrono_forks, chrono_diff, chrono_merge_winner, chrono_prune, chrono_ledger
+You have time manipulation over the surface repos (desktop, ide, launcher, pty, workstation). Every mutating tool call you make already produces an automatic micro-snapshot, so a T-1 recovery point always exists.
+
+When to use what:
+- BEFORE risky or multi-step work: chrono_snapshot with a descriptive message. Cheap insurance.
+- MISTAKE RECOVERY: chrono_log to find the last good snapshot, then chrono_rewind({to: sha}). The rewind itself auto-snapshots first and returns a recovery_hint, so even a rewind is undoable.
+- PARALLEL EXPERIMENTS: chrono_fork({names:["a","b"]}) to try competing approaches in isolated worktrees, chrono_diff to compare, chrono_merge_winner to keep the best (this deletes losing forks), chrono_prune to abandon.
+- AUDIT: chrono_ledger shows every chrono operation with timestamps.
+
+Safety rules:
+- NEVER pass hard=true to chrono_rewind unless the user explicitly says to discard uncommitted work. Default rewind preserves it.
+- chrono_merge_winner and chrono_prune destroy fork timelines. Confirm with chrono_diff / the user before using them on forks containing real work.
+- If a rewind surprises you, the recovery_hint in its result restores the pre-rewind state exactly.`
+    : '';
 
   const gatewaySection = gatewayAvailable
     ? `### MCP Gateway (fleet front door) — mcp_search_tools, mcp_describe_tool, mcp_call_tool, mcp_list_servers, mcp_health_check
@@ -66,6 +84,8 @@ cache_store, cache_retrieve, cache_search, manage_scratchpad, todo_sniper, fetch
 ${mcpSection}
 
 ${gatewaySection}
+
+${chronoSection}
 
 ### Multimedia
 You have native vision when images are provided in the conversation: you can identify, describe, and discuss images directly. Media *generation* (creating images/video/audio) is not built in — if asked, check the connected MCP servers for a matching tool first; if none exists, explain that generation requires connecting a media MCP server rather than refusing outright.
