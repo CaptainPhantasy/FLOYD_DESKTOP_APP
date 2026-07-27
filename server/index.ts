@@ -103,7 +103,11 @@ const distPath = path.join(__dirname, '../dist');
 app.use(express.static(distPath));
 
 // Data directory for sessions and settings
-const DATA_DIR = path.join(__dirname, '../.floyd-data');
+// Session/settings data lives in the user's runtime root (installed app
+// directories are read-only); the legacy in-tree .floyd-data is a dev fallback.
+const DATA_DIR = process.env.FLOYD_RUNTIME_ROOT
+    ? path.join(process.env.FLOYD_RUNTIME_ROOT, 'desktop-data')
+    : path.join(__dirname, '../.floyd-data');
 
 // Types
 interface Attachment {
@@ -197,7 +201,9 @@ let settings: Settings = {
   apiKey: process.env.GLM_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || '',
   model: 'gpt-5.4',
   maxTokens: 16384,
-  baseURL: 'https://api.z.ai/api/anthropic',
+  // Vault proxy override: the frame injects ANTHROPIC_BASE_URL pointing at
+  // the loopback credential proxy; real endpoints are only a fallback.
+  baseURL: process.env.ANTHROPIC_BASE_URL || 'https://api.z.ai/api/anthropic',
 };
 
 // ChatGPT subscription client (single instance; owns token refresh)
@@ -435,7 +441,7 @@ app.post('/api/test-key', async (req, res) => {
       // Test with Z.ai endpoint using Anthropic SDK
       const client = new Anthropic({ 
         apiKey,
-        baseURL: 'https://api.z.ai/api/anthropic'
+        baseURL: process.env.ANTHROPIC_BASE_URL || 'https://api.z.ai/api/anthropic'
       });
       const response = await client.messages.create({
         model: 'glm-4.7',
@@ -509,13 +515,19 @@ app.delete('/api/skills/:id', async (req, res) => {
 
 // Activate/deactivate skill
 app.post('/api/skills/:id/activate', async (req, res) => {
-  await skillsManager.activate(req.params.id);
-  res.json({ success: true });
+  const success = await skillsManager.activate(req.params.id);
+  if (!success) {
+    return res.status(404).json({ success: false, error: 'Skill not found' });
+  }
+  res.json({ success: true, isActive: true });
 });
 
 app.post('/api/skills/:id/deactivate', async (req, res) => {
-  await skillsManager.deactivate(req.params.id);
-  res.json({ success: true });
+  const success = await skillsManager.deactivate(req.params.id);
+  if (!success) {
+    return res.status(404).json({ success: false, error: 'Skill not found' });
+  }
+  res.json({ success: true, isActive: false });
 });
 
 // === PROJECTS API ===
