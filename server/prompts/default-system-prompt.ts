@@ -57,7 +57,9 @@ Rules:
 
   const mcpSection = mcpServers.length > 0
     ? `- Connected MCP servers: ${mcpServers.join(', ')}. Their tools are available with the prefix mcp__<server>__<tool>.`
-    : `- No external MCP servers are currently connected. If the user asks for a capability that requires one, say so and suggest connecting it in settings, but first check whether a built-in tool covers the request.`;
+    : gatewayAvailable
+      ? `- The MCP Gateway is connected. No separate direct-server list was supplied; discover fleet capabilities through the Gateway search -> describe -> call flow below.`
+      : `- No external MCP servers are currently connected. If the user asks for a capability that requires one, say so and suggest connecting it in settings, but first check whether a built-in tool covers the request.`;
 
   return `You are Floyd, the Floyd Desktop agent. You are the single agent responsible for this application window: chat, file and terminal work, code execution, browser automation, and dispatching Browork sub-agents for parallel work.
 

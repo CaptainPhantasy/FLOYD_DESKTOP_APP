@@ -13,6 +13,7 @@ interface SidebarProps {
   onSelectSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
   onOpenSettings: () => void;
+  newSessionDisabled?: boolean;
 }
 
 export function Sidebar({
@@ -22,6 +23,7 @@ export function Sidebar({
   onSelectSession,
   onDeleteSession,
   onOpenSettings,
+  newSessionDisabled,
 }: SidebarProps) {
   return (
     <div className="w-64 bg-slate-800 border-r border-slate-700 flex flex-col">
@@ -29,10 +31,11 @@ export function Sidebar({
       <div className="p-4 border-b border-slate-700">
         <button
           onClick={onNewSession}
+          disabled={newSessionDisabled}
           className={cn(
             'w-full flex items-center justify-center gap-2 px-4 py-2',
             'bg-sky-600 hover:bg-sky-700 rounded-lg transition-colors',
-            'text-sm font-medium',
+            'text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed',
           )}
         >
           <Plus className="w-4 h-4" />

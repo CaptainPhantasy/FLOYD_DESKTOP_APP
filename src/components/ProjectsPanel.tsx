@@ -408,7 +408,7 @@ export function ProjectsPanel({ isOpen, onClose }: ProjectsPanelProps) {
                   />
                   
                   <input
-                    placeholder="Description"
+                    placeholder="Description (optional)"
                     value={newProject.description}
                     onChange={(e) => setNewProject(p => ({ ...p, description: e.target.value }))}
                     className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm"

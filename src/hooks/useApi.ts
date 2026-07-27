@@ -37,7 +37,14 @@ export function useApi() {
     return fetchJson<Settings>('/settings');
   }, [fetchJson]);
 
-  const updateSettings = useCallback(async (settings: Partial<{ apiKey: string; model: string; systemPrompt: string; maxTokens: number }>) => {
+  const updateSettings = useCallback(async (settings: Partial<{
+    provider: 'chatgpt-subscription' | 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
+    apiKey: string;
+    model: string;
+    systemPrompt: string;
+    maxTokens: number;
+    baseURL: string;
+  }>) => {
     return fetchJson<{ success: boolean }>('/settings', {
       method: 'POST',
       body: JSON.stringify(settings),

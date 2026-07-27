@@ -219,7 +219,7 @@ export function BroworkPanel({ isOpen, onClose }: BroworkPanelProps) {
                 placeholder="Detailed description of what the agent should do..."
                 value={newTask.description}
                 onChange={(e) => setNewTask(p => ({ ...p, description: e.target.value }))}
-                className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm h-24 resize-none"
+                className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm h-24 resize-none overflow-x-hidden"
               />
               
               <div className="flex gap-2">

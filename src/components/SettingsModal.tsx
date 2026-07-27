@@ -88,7 +88,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
         setHasExistingKey(settings.hasApiKey);
         setKeyPreview(settings.apiKeyPreview);
         setSystemPrompt(settings.systemPrompt || '');
-        setEffectivePrompt((settings as any).effectiveSystemPrompt || '');
+        setEffectivePrompt(settings.effectiveSystemPrompt || '');
         setMaxTokens(settings.maxTokens || 16384);
         setBaseURL(settings.baseURL || '');
         setApiKey('');

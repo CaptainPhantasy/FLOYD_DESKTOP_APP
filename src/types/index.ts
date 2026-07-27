@@ -24,9 +24,12 @@ export interface Session {
 }
 
 export interface Settings {
+  provider?: 'chatgpt-subscription' | 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
   model: string;
   hasApiKey: boolean;
   apiKeyPreview: string | null;
   systemPrompt?: string;
+  effectiveSystemPrompt?: string;
   maxTokens?: number;
+  baseURL?: string;
 }

@@ -2,7 +2,6 @@
  * FileInput — attach photos, videos, files, and whole folders to a chat message.
  * Ported from the canonical FloydDesktopWeb-v2 desktop, with folder upload added.
  */
-import { useRef } from 'react';
 import { Paperclip, FolderUp, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -40,9 +39,6 @@ interface FileInputProps {
 }
 
 export function FileInput({ attachments, onAttachmentsChange, disabled, chipsOnly }: FileInputProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
-
   const handleFileSelect = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
@@ -73,9 +69,6 @@ export function FileInput({ attachments, onAttachmentsChange, disabled, chipsOnl
     }));
 
     onAttachmentsChange([...attachments, ...newAttachments]);
-
-    if (fileInputRef.current) fileInputRef.current.value = '';
-    if (folderInputRef.current) folderInputRef.current.value = '';
   };
 
   const handleRemove = (id: string) => {
@@ -115,51 +108,54 @@ export function FileInput({ attachments, onAttachmentsChange, disabled, chipsOnl
 
   return (
     <div>
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        accept="image/*,video/*,.pdf,.doc,.docx,.txt,.md,.js,.ts,.tsx,.jsx,.py,.java,.c,.cpp,.cs,.go,.rb,.php,.html,.css,.json,.xml,.yaml,.yml,.csv"
-        onChange={(e) => handleFileSelect(e.target.files)}
-        className="hidden"
-      />
-      <input
-        ref={folderInputRef}
-        type="file"
-        multiple
-        // @ts-expect-error webkitdirectory is a non-standard but widely supported attribute
-        webkitdirectory=""
-        onChange={(e) => handleFileSelect(e.target.files)}
-        className="hidden"
-      />
-
       <div className="flex items-center">
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled}
+        <div
           className={cn(
-            'p-2 rounded-lg transition-colors',
-            'hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed',
+            'relative p-2 rounded-lg transition-colors focus-within:ring-2 focus-within:ring-sky-500',
+            'hover:bg-slate-700',
             'text-slate-400 hover:text-slate-200',
+            disabled && 'opacity-50 cursor-not-allowed',
           )}
           title="Attach files (photos, videos, documents, code)"
         >
-          <Paperclip className="w-5 h-5" />
-        </button>
-        <button
-          type="button"
-          onClick={() => folderInputRef.current?.click()}
-          disabled={disabled}
+          <Paperclip className="w-5 h-5 pointer-events-none" />
+          <input
+            type="file"
+            multiple
+            aria-label="Attach files"
+            accept="image/*,video/*,.pdf,.doc,.docx,.txt,.md,.js,.ts,.tsx,.jsx,.py,.java,.c,.cpp,.cs,.go,.rb,.php,.html,.css,.json,.xml,.yaml,.yml,.csv"
+            onClick={(event) => {
+              event.currentTarget.value = '';
+            }}
+            onChange={(event) => handleFileSelect(event.currentTarget.files)}
+            disabled={disabled}
+            className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+          />
+        </div>
+        <div
           className={cn(
-            'p-2 rounded-lg transition-colors',
-            'hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed',
+            'relative p-2 rounded-lg transition-colors focus-within:ring-2 focus-within:ring-sky-500',
+            'hover:bg-slate-700',
             'text-slate-400 hover:text-slate-200',
+            disabled && 'opacity-50 cursor-not-allowed',
           )}
           title="Attach a folder"
         >
-          <FolderUp className="w-5 h-5" />
-        </button>
+          <FolderUp className="w-5 h-5 pointer-events-none" />
+          <input
+            type="file"
+            multiple
+            aria-label="Attach a folder"
+            // @ts-expect-error webkitdirectory is a non-standard but widely supported attribute
+            webkitdirectory=""
+            onClick={(event) => {
+              event.currentTarget.value = '';
+            }}
+            onChange={(event) => handleFileSelect(event.currentTarget.files)}
+            disabled={disabled}
+            className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+          />
+        </div>
       </div>
 
       {chips}

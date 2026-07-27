@@ -61,19 +61,6 @@ const CRUSH_EXTENDED: ExtendedColors = {
   uni: '#FF937D',
 };
 
-// Role-based semantic colors - 9 roles
-const CRUSH_ROLES: RoleColors = {
-  headerTitle: '#FF60FF',    // accent.secondary (Dolly)
-  headerStatus: '#DFDBDD',   // text.primary (Ash)
-  userLabel: '#12C78F',      // status.ready (Guac)
-  assistantLabel: '#00A4FF', // accent.info (Malibu)
-  systemLabel: '#E8FE96',    // accent.highlight (Zest)
-  toolLabel: '#68FFD6',      // accent.tertiary (Bok)
-  thinking: '#E8FE96',       // accent.highlight (Zest)
-  inputPrompt: '#12C78F',    // status.ready (Guac)
-  hint: '#959AA2',           // text.secondary (Squid)
-};
-
 // Syntax highlighting colors - 8 tokens
 const CRUSH_SYNTAX: SyntaxColors = {
   keywords: '#00A4FF',     // accent.info (Malibu)

@@ -282,16 +282,18 @@ export class SkillsManager {
     return deleted;
   }
 
-  async activate(id: string): Promise<void> {
-    if (this.skills.has(id)) {
-      this.activeSkills.add(id);
-      await this.save();
-    }
+  async activate(id: string): Promise<boolean> {
+    if (!this.skills.has(id)) return false;
+    this.activeSkills.add(id);
+    await this.save();
+    return true;
   }
 
-  async deactivate(id: string): Promise<void> {
+  async deactivate(id: string): Promise<boolean> {
+    if (!this.skills.has(id)) return false;
     this.activeSkills.delete(id);
     await this.save();
+    return true;
   }
 
   isActive(id: string): boolean {

@@ -34,6 +34,8 @@ interface SkillsPanelProps {
 export function SkillsPanel({ isOpen, onClose }: SkillsPanelProps) {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(false);
+  const [togglingSkills, setTogglingSkills] = useState<Set<string>>(new Set());
+  const [toggleError, setToggleError] = useState<string | null>(null);
   const [expandedSkill, setExpandedSkill] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newSkill, setNewSkill] = useState({
@@ -54,6 +56,7 @@ export function SkillsPanel({ isOpen, onClose }: SkillsPanelProps) {
     setLoading(true);
     try {
       const res = await fetch('/api/skills');
+      if (!res.ok) throw new Error(`Unable to load skills (HTTP ${res.status})`);
       const data = await res.json();
       setSkills(data.skills);
     } catch (err) {
@@ -67,9 +70,32 @@ export function SkillsPanel({ isOpen, onClose }: SkillsPanelProps) {
     const endpoint = skill.isActive 
       ? `/api/skills/${skill.id}/deactivate`
       : `/api/skills/${skill.id}/activate`;
-    
-    await fetch(endpoint, { method: 'POST' });
-    await loadSkills();
+
+    setToggleError(null);
+    setTogglingSkills(current => new Set(current).add(skill.id));
+    try {
+      const response = await fetch(endpoint, { method: 'POST' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.success === false) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+
+      const isActive = typeof data.isActive === 'boolean'
+        ? data.isActive
+        : !skill.isActive;
+      setSkills(current => current.map(item =>
+        item.id === skill.id ? { ...item, isActive } : item
+      ));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      setToggleError(`Could not update ${skill.name}: ${message}`);
+    } finally {
+      setTogglingSkills(current => {
+        const next = new Set(current);
+        next.delete(skill.id);
+        return next;
+      });
+    }
   };
 
   const deleteSkill = async (id: string) => {
@@ -122,6 +148,14 @@ export function SkillsPanel({ isOpen, onClose }: SkillsPanelProps) {
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {toggleError && (
+            <div
+              role="alert"
+              className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300"
+            >
+              {toggleError}
+            </div>
+          )}
           {loading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
@@ -177,12 +211,17 @@ export function SkillsPanel({ isOpen, onClose }: SkillsPanelProps) {
                           </div>
                           
                           <button
+                            type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              toggleSkill(skill);
+                              void toggleSkill(skill);
                             }}
+                            disabled={togglingSkills.has(skill.id)}
+                            aria-label={`${skill.isActive ? 'Disable' : 'Enable'} ${skill.name}`}
+                            aria-pressed={Boolean(skill.isActive)}
+                            aria-busy={togglingSkills.has(skill.id)}
                             className={cn(
-                              'w-8 h-8 rounded-full flex items-center justify-center',
+                              'w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-60 disabled:cursor-wait',
                               skill.isActive 
                                 ? 'bg-purple-500 text-white' 
                                 : 'bg-slate-600 text-slate-400 hover:bg-slate-500'

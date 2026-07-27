@@ -28,6 +28,7 @@ import {
 
 export default function App() {
   const api = useApi();
+  type ConnectionStatus = 'loading' | 'ready' | 'no-key' | 'error';
   
   // State
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -39,8 +40,10 @@ export default function App() {
   const [streamingContent, setStreamingContent] = useState('');
   const [_settings, setSettings] = useState<Settings | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'no-key' | 'error'>('loading');
+  const [status, setStatus] = useState<ConnectionStatus>('loading');
+  const [statusTone, setStatusTone] = useState<ConnectionStatus>('loading');
   const [statusMessage, setStatusMessage] = useState('');
+  const [isCreatingSession, setIsCreatingSession] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
   // ?browork=1 or #browork deep-links straight to the Browork panel (frame tab).
@@ -58,6 +61,27 @@ export default function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const streamingContentRef = useRef<string>('');
+  const connectionNoticeRef = useRef<{ status: ConnectionStatus; message: string }>({
+    status: 'loading',
+    message: '',
+  });
+
+  const setConnectionNotice = useCallback((nextStatus: ConnectionStatus, message: string) => {
+    connectionNoticeRef.current = { status: nextStatus, message };
+    setStatus(nextStatus);
+    setStatusTone(nextStatus);
+    setStatusMessage(message);
+  }, []);
+
+  const showOperationError = useCallback((message: string) => {
+    setStatusTone('error');
+    setStatusMessage(message);
+  }, []);
+
+  const restoreConnectionNotice = useCallback(() => {
+    setStatusTone(connectionNoticeRef.current.status);
+    setStatusMessage(connectionNoticeRef.current.message);
+  }, []);
 
   // Scroll to bottom
   const scrollToBottom = useCallback(() => {
@@ -77,8 +101,10 @@ export default function App() {
         setSettings(settingsData);
         
         if (!health.hasApiKey) {
-          setStatus('no-key');
-          setStatusMessage('API key not configured. Click Settings to add your Anthropic API key.');
+          setConnectionNotice(
+            'no-key',
+            'API key not configured. Click Settings to add your Anthropic API key.',
+          );
           setShowSettings(true);
           return;
         }
@@ -99,11 +125,9 @@ export default function App() {
           setMessages([]);
         }
         
-        setStatus('ready');
-        setStatusMessage(`Connected to ${health.model}`);
+        setConnectionNotice('ready', `Connected to ${health.model}`);
       } catch (err: any) {
-        setStatus('error');
-        setStatusMessage(err.message || 'Failed to connect to server');
+        setConnectionNotice('error', err.message || 'Failed to connect to server');
       }
     }
     
@@ -113,6 +137,7 @@ export default function App() {
   // Handle send message
   const handleSend = async () => {
     if ((!input.trim() && attachments.length === 0) || isStreaming || !currentSession) return;
+    restoreConnectionNotice();
 
     // Upload attachments first so the server holds base64 payloads
     let uploadedAttachments: Attachment[] = [];
@@ -123,7 +148,7 @@ export default function App() {
           uploadedAttachments = uploadResult.files;
         }
       } catch (err: any) {
-        setStatusMessage(`Upload error: ${err.message}`);
+        showOperationError(`Upload error: ${err.message}`);
         return;
       }
       setAttachments([]);
@@ -153,7 +178,7 @@ export default function App() {
           setStreamingContent(streamingContentRef.current);
         },
         // onDone
-        async (usage, sessionId) => {
+        async (_usage, _sessionId) => {
           const fullContent = streamingContentRef.current;
           if (fullContent) {
             setMessages(prev => [...prev, {
@@ -166,6 +191,7 @@ export default function App() {
           streamingContentRef.current = '';
           setIsStreaming(false);
           setActiveToolCalls([]);
+          restoreConnectionNotice();
           
           // Refresh sessions list
           const sessionList = await api.getSessions();
@@ -173,7 +199,7 @@ export default function App() {
         },
         // onError
         (error) => {
-          setStatusMessage(`Error: ${error}`);
+          showOperationError(`Error: ${error}`);
           setIsStreaming(false);
           setStreamingContent('');
           streamingContentRef.current = '';
@@ -189,7 +215,7 @@ export default function App() {
           }]);
         },
         // onToolResult
-        (tool, id, result, success) => {
+        (_tool, id, result, success) => {
           setActiveToolCalls(prev => prev.map(tc => 
             tc.id === id 
               ? { ...tc, result, success, isExecuting: false }
@@ -199,7 +225,7 @@ export default function App() {
         uploadedAttachments.length > 0 ? uploadedAttachments : undefined
       );
     } catch (err: any) {
-      setStatusMessage(`Error: ${err.message}`);
+      showOperationError(`Error: ${err.message}`);
       setIsStreaming(false);
     }
   };
@@ -214,14 +240,24 @@ export default function App() {
 
   // Handle new session
   const handleNewSession = async () => {
+    if (isCreatingSession || isStreaming) return;
+    setIsCreatingSession(true);
     try {
       const session = await api.createSession();
       setSessions(prev => [session, ...prev]);
       setCurrentSession(session);
       setMessages([]);
+      setInput('');
+      setAttachments([]);
+      setStreamingContent('');
+      streamingContentRef.current = '';
+      setActiveToolCalls([]);
+      restoreConnectionNotice();
       inputRef.current?.focus();
     } catch (err: any) {
-      setStatusMessage(`Error: ${err.message}`);
+      showOperationError(`Error: ${err.message}`);
+    } finally {
+      setIsCreatingSession(false);
     }
   };
 
@@ -231,8 +267,10 @@ export default function App() {
       const session = await api.getSession(sessionId);
       setCurrentSession(session);
       setMessages(session.messages);
+      setAttachments([]);
+      restoreConnectionNotice();
     } catch (err: any) {
-      setStatusMessage(`Error: ${err.message}`);
+      showOperationError(`Error: ${err.message}`);
     }
   };
 
@@ -255,8 +293,9 @@ export default function App() {
           setMessages([]);
         }
       }
+      restoreConnectionNotice();
     } catch (err: any) {
-      setStatusMessage(`Error: ${err.message}`);
+      showOperationError(`Error: ${err.message}`);
     }
   };
 
@@ -267,8 +306,12 @@ export default function App() {
     
     const health = await api.checkHealth();
     if (health.hasApiKey) {
-      setStatus('ready');
-      setStatusMessage(`Connected to ${health.model}`);
+      setConnectionNotice('ready', `Connected to ${health.model}`);
+    } else {
+      setConnectionNotice(
+        'no-key',
+        'API key not configured. Click Settings to add your Anthropic API key.',
+      );
     }
   };
 
@@ -282,6 +325,7 @@ export default function App() {
         onSelectSession={handleSelectSession}
         onDeleteSession={handleDeleteSession}
         onOpenSettings={() => setShowSettings(true)}
+        newSessionDisabled={isCreatingSession || isStreaming}
       />
 
       {/* Main Content */}
@@ -297,17 +341,21 @@ export default function App() {
           
           <div className="flex items-center gap-2">
             {/* Status indicator */}
-            <div className={cn(
+            <div
+              role="status"
+              aria-live="polite"
+              data-status-tone={statusTone}
+              className={cn(
               'flex items-center gap-2 text-sm px-3 py-1 rounded-full',
-              status === 'ready' && 'bg-green-500/10 text-green-400',
-              status === 'loading' && 'bg-blue-500/10 text-blue-400',
-              status === 'no-key' && 'bg-yellow-500/10 text-yellow-400',
-              status === 'error' && 'bg-red-500/10 text-red-400',
+              statusTone === 'ready' && 'bg-green-500/10 text-green-400',
+              statusTone === 'loading' && 'bg-blue-500/10 text-blue-400',
+              statusTone === 'no-key' && 'bg-yellow-500/10 text-yellow-400',
+              statusTone === 'error' && 'bg-red-500/10 text-red-400',
             )}>
-              {status === 'loading' && <Loader2 className="w-4 h-4 animate-spin" />}
-              {status === 'ready' && <CheckCircle2 className="w-4 h-4" />}
-              {status === 'no-key' && <AlertCircle className="w-4 h-4" />}
-              {status === 'error' && <AlertCircle className="w-4 h-4" />}
+              {statusTone === 'loading' && <Loader2 className="w-4 h-4 animate-spin" />}
+              {statusTone === 'ready' && <CheckCircle2 className="w-4 h-4" />}
+              {statusTone === 'no-key' && <AlertCircle className="w-4 h-4" />}
+              {statusTone === 'error' && <AlertCircle className="w-4 h-4" />}
               <span className="max-w-[200px] truncate">{statusMessage}</span>
             </div>
             
@@ -516,7 +564,7 @@ export default function App() {
                 disabled={status !== 'ready' || isStreaming}
                 className={cn(
                   'flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-3',
-                  'resize-none focus:outline-none focus:ring-2 focus:ring-sky-500',
+                  'resize-none overflow-x-hidden focus:outline-none focus:ring-2 focus:ring-sky-500',
                   'placeholder:text-slate-500 disabled:opacity-50',
                 )}
                 rows={1}
