@@ -23,6 +23,11 @@ const OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token';
 // Public client id used by Codex CLI's OAuth app (not a secret).
 const OAUTH_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const BACKEND_URL = 'https://chatgpt.com/backend-api/codex/responses';
+// FLOYD vault proxy: when the frame injects these, the loopback credential
+// proxy owns the Codex OAuth tokens and this client sends only its fv_ token.
+const VAULT_PROXY_URL = process.env.FLOYD_VAULT_PROXY_URL;
+const VAULT_PROXY_TOKEN = process.env.FLOYD_VAULT_PROXY_TOKEN;
+const USE_VAULT_PROXY = Boolean(VAULT_PROXY_URL && VAULT_PROXY_TOKEN);
 
 export const CHATGPT_AUTH_FILE_DEFAULT = path.join(os.homedir(), '.codex', 'auth.json');
 
@@ -97,6 +102,14 @@ export class ChatGPTSubscriptionClient {
   }
 
   async isConfigured(): Promise<boolean> {
+    if (USE_VAULT_PROXY) {
+      try {
+        const res = await fetch(`${VAULT_PROXY_URL}/healthz`, { signal: AbortSignal.timeout(2000) });
+        return res.ok;
+      } catch {
+        return false;
+      }
+    }
     try {
       const auth = await this.readAuth();
       return Boolean(auth.tokens?.access_token && auth.tokens?.refresh_token);
@@ -189,7 +202,11 @@ export class ChatGPTSubscriptionClient {
     callbacks?: StreamCallbacks;
   }): Promise<TurnResult> {
     const { model, instructions, input, tools, callbacks } = options;
-    const { token, accountId } = await this.getAccessToken();
+    // Vault proxy mode: the proxy holds the OAuth tokens; we present only
+    // our per-app fv_ token and it swaps in the real credential.
+    const { token, accountId } = USE_VAULT_PROXY
+      ? { token: VAULT_PROXY_TOKEN as string, accountId: undefined as unknown as string }
+      : await this.getAccessToken();
 
     const body: Record<string, unknown> = {
       model,
@@ -203,16 +220,17 @@ export class ChatGPTSubscriptionClient {
       body.tool_choice = 'auto';
     }
 
-    const res = await fetch(BACKEND_URL, {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'OpenAI-Beta': 'responses=experimental',
+      originator: 'codex_cli_rs',
+      'User-Agent': 'floyd-desktop/0.1 (codex_cli_rs compatible)',
+    };
+    if (accountId) headers['chatgpt-account-id'] = accountId;
+    const res = await fetch(USE_VAULT_PROXY ? `${VAULT_PROXY_URL}/v1/responses` : BACKEND_URL, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'chatgpt-account-id': accountId,
-        'Content-Type': 'application/json',
-        'OpenAI-Beta': 'responses=experimental',
-        originator: 'codex_cli_rs',
-        'User-Agent': 'floyd-desktop/0.1 (codex_cli_rs compatible)',
-      },
+      headers,
       body: JSON.stringify(body),
     });
 
